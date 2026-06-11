@@ -2,9 +2,9 @@
 id: seedance1_5
 type: video
 family: seedance
-status: skeleton
+status: verified
 supports_start_end_frame: true
-native_audio: false
+native_audio: true
 max_clip_seconds: 12
 aspect_ratios: ["auto","16:9","9:16","4:3","3:4","1:1","21:9"]
 cost_tier: low
@@ -28,7 +28,14 @@ cost_tier: low
 
 **Смета:** 4.8 кредита за 4с (720p).
 
-**Ожидает спайка (Task 2):** визуальное качество, интерполяция start→end.
+## Проверено спайком (2026-06-12, генерация)
+
+- **Start/end интерполяция работает**: первый кадр видео = start-image, последний =
+  end-image, движение плавное, персонаж стабилен (spike/seg1.mp4, 4.05с, 1280×720, 24fps).
+- **Файл приходит с аудиодорожкой** (AAC; в params ответа `generate_audio: true`,
+  хотя в `model get` такого параметра нет) — поэтому `native_audio: true`.
+  Для фазы 1 аудио игнорировать, вырезать в фазе 2.
+- Списание совпало со сметой: 4.8 кр.
 
 ## Сильные стороны
 (карточка-скелет: наполняется при первом использовании модели)
