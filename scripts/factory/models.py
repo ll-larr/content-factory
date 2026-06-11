@@ -14,8 +14,15 @@ def load_card(path: Path) -> dict:
     text = Path(path).read_text(encoding="utf-8")
     if not text.startswith("---"):
         raise ModelError(f"{path}: card has no YAML frontmatter")
-    _, fm, _body = text.split("---", 2)
-    card = yaml.safe_load(fm)
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise ModelError(f"{path}: frontmatter is not closed with '---'")
+    try:
+        card = yaml.safe_load(parts[1])
+    except yaml.YAMLError as e:
+        raise ModelError(f"{path}: invalid YAML — {e}") from None
+    if not isinstance(card, dict):
+        raise ModelError(f"{path}: frontmatter is not a YAML mapping")
     for req in ("id", "type", "status"):
         if req not in card:
             raise ModelError(f"{path}: frontmatter missing {req!r}")
@@ -23,13 +30,23 @@ def load_card(path: Path) -> dict:
 
 
 def find_card(knowledge_dir: Path, model_id: str) -> dict:
+    """Битые карточки пропускаются (не должны ломать поиск остальных);
+    если модель не найдена — пропущенные перечисляются в ошибке."""
+    skipped: list[str] = []
     for p in sorted(Path(knowledge_dir).rglob("*.md")):
         if p.name.startswith("_"):
             continue
-        card = load_card(p)
+        try:
+            card = load_card(p)
+        except ModelError:
+            skipped.append(str(p))
+            continue
         if card["id"] == model_id:
             return card
-    raise ModelError(f"no knowledge card for model {model_id!r}")
+    msg = f"no knowledge card for model {model_id!r}"
+    if skipped:
+        msg += f" (skipped malformed cards: {', '.join(skipped)})"
+    raise ModelError(msg)
 
 
 def validate_video_model(card: dict, segment_seconds: int) -> list[str]:
@@ -42,9 +59,10 @@ def validate_video_model(card: dict, segment_seconds: int) -> list[str]:
         problems.append(
             f"{card['id']}: no start/end frame support — "
             "segment chaining (спека §4) will break")
-    if card.get("max_clip_seconds", 0) < segment_seconds:
+    max_clip = card.get("max_clip_seconds", 0)
+    if max_clip < segment_seconds:
         problems.append(
-            f"{card['id']}: max clip {card.get('max_clip_seconds', 0)}s "
+            f"{card['id']}: max clip {max_clip}s "
             f"< required {segment_seconds}s")
     if card.get("status") == "skeleton":
         problems.append(
