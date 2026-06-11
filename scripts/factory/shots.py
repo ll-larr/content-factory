@@ -17,7 +17,10 @@ def load_shots(path: Path, project_dir: Path) -> dict:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     frames = data.get("frames", [])
-    numbers = {f["n"] for f in frames}
+    try:
+        numbers = {f["n"] for f in frames}
+    except (KeyError, TypeError) as e:
+        raise ShotsError(f"frame entry missing required key: {e}") from None
     if not frames:
         raise ShotsError("shots.json has no frames")
     if numbers != set(range(1, len(frames) + 1)):
@@ -32,16 +35,20 @@ def load_shots(path: Path, project_dir: Path) -> dict:
 
     segments = data.get("segments", [])
     for s in segments:
-        expected = (s["n"], s["n"] + 1)
-        if (s["start_frame"], s["end_frame"]) != expected:
+        try:
+            expected = (s["n"], s["n"] + 1)
+            actual = (s["start_frame"], s["end_frame"])
+        except KeyError as e:
+            raise ShotsError(f"segment entry missing required key: {e}") from None
+        if actual != expected:
             raise ShotsError(
                 f"segment {s['n']}: must chain frames "
                 f"{expected[0]}->{expected[1]}, "
-                f"got {s['start_frame']}->{s['end_frame']}")
+                f"got {actual[0]}->{actual[1]}")
         if not s.get("prompt"):
             raise ShotsError(f"segment {s['n']}: empty prompt")
 
-    if segments and len(segments) != len(frames) - 1:
+    if len(segments) != len(frames) - 1:
         raise ShotsError(
             f"{len(frames)} frames require {len(frames) - 1} segments, "
             f"got {len(segments)}")
