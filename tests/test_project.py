@@ -42,3 +42,20 @@ def test_unknown_type_raises(tmp_path):
 def test_missing_video_model_raises(tmp_path):
     with pytest.raises(ProjectError, match="models.video"):
         load_project(write(tmp_path, {**BASE, "models": {"image": "nano-banana-2"}}))
+
+
+def test_missing_name_raises(tmp_path):
+    data = {k: v for k, v in BASE.items() if k != "name"}
+    with pytest.raises(ProjectError, match="name"):
+        load_project(write(tmp_path, data))
+
+
+def test_missing_models_entirely_raises(tmp_path):
+    data = {k: v for k, v in BASE.items() if k != "models"}
+    with pytest.raises(ProjectError, match="models is required"):
+        load_project(write(tmp_path, data))
+
+
+def test_unknown_strictness_raises(tmp_path):
+    with pytest.raises(ProjectError, match="unknown review_strictness"):
+        load_project(write(tmp_path, {**BASE, "review_strictness": "paranoid"}))

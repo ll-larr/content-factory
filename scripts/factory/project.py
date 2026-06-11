@@ -28,7 +28,7 @@ class Project:
     type: str
     theme: str
     language: str
-    models: dict
+    models: dict[str, str]
     quality_mode: str
     review_strictness: str
     raw: dict
@@ -49,8 +49,14 @@ def load_project(path: Path) -> Project:
     if missing:
         raise ProjectError(f"missing required fields for {ptype}: {missing}")
 
+    if "name" not in data:
+        raise ProjectError("missing required field: 'name'")
+
+    if not isinstance(data.get("models"), dict):
+        raise ProjectError("models is required")
+
     for m in ("image", "video"):
-        if m not in data.get("models", {}):
+        if m not in data["models"]:
             raise ProjectError(f"models.{m} is required")
 
     quality = data.get("quality_mode", "high")
