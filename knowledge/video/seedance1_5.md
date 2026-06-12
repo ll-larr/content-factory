@@ -6,6 +6,7 @@ status: verified
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 12
+allowed_durations: [4, 8, 12]
 aspect_ratios: ["auto","16:9","9:16","4:3","3:4","1:1","21:9"]
 cost_tier: low
 ---

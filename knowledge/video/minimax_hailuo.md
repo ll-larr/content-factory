@@ -6,6 +6,7 @@ status: skeleton
 supports_start_end_frame: false
 native_audio: false
 max_clip_seconds: 10
+allowed_durations: [6, 10]
 aspect_ratios: []
 cost_tier: low
 ---

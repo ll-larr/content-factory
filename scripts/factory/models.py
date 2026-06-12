@@ -64,6 +64,11 @@ def validate_video_model(card: dict, segment_seconds: int) -> list[str]:
         problems.append(
             f"{card['id']}: max clip {max_clip}s "
             f"< required {segment_seconds}s")
+    # Проверяем сетку допустимых длительностей: None/[] = сетка неизвестна, не проверяем
+    allowed = card.get("allowed_durations")
+    if allowed and segment_seconds not in allowed:
+        problems.append(
+            f"{card['id']}: duration {segment_seconds}s not in allowed grid {allowed}")
     if card.get("status") == "skeleton":
         problems.append(
             f"{card['id']}: card is a skeleton — capabilities not verified, "

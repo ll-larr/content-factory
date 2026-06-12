@@ -6,6 +6,7 @@ status: skeleton         # skeleton | verified (после проверки сп
 supports_start_end_frame: false   # для video: true только после проверки
 native_audio: false
 max_clip_seconds: 0      # для video
+allowed_durations: []   # для video: сетка допустимых длительностей из model get; [] = неизвестна
 aspect_ratios: []
 cost_tier: unknown       # low | medium | high
 ---

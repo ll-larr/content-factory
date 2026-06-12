@@ -79,3 +79,55 @@ def test_find_card_mentions_skipped_when_not_found(tmp_path):
     kdir = write_card(tmp_path, "---\nid: broken\n", name="aaa-broken.md")
     with pytest.raises(ModelError, match="skipped malformed"):
         find_card(kdir, "kling-2.0")
+
+
+# --- Тесты сетки допустимых длительностей (allowed_durations) ---
+
+CARD_WITH_GRID = """---
+id: seedance1_5
+type: video
+family: seedance
+status: verified
+supports_start_end_frame: true
+native_audio: true
+max_clip_seconds: 12
+allowed_durations: [4, 8, 12]
+cost_tier: low
+---
+# Seedance 1.5 Pro
+"""
+
+CARD_WITHOUT_GRID = """---
+id: wan2_7
+type: video
+family: wan
+status: verified
+supports_start_end_frame: true
+native_audio: false
+max_clip_seconds: 30
+cost_tier: low
+---
+# Wan 2.7
+"""
+
+
+def test_validate_rejects_segment_not_in_allowed_grid(tmp_path):
+    """segment_seconds=5 не входит в сетку [4,8,12] — ровно одна problem."""
+    card = load_card(write_card(tmp_path, CARD_WITH_GRID) / "video" / "kling-2.0.md")
+    problems = validate_video_model(card, segment_seconds=5)
+    assert len(problems) == 1
+    assert "allowed grid" in problems[0]
+
+
+def test_validate_accepts_segment_in_allowed_grid(tmp_path):
+    """segment_seconds=8 входит в сетку [4,8,12] — problems нет."""
+    card = load_card(write_card(tmp_path, CARD_WITH_GRID) / "video" / "kling-2.0.md")
+    problems = validate_video_model(card, segment_seconds=8)
+    assert problems == []
+
+
+def test_validate_no_grid_field_means_no_check(tmp_path):
+    """Карточка без allowed_durations — поведение не меняется, problems нет."""
+    card = load_card(write_card(tmp_path, CARD_WITHOUT_GRID) / "video" / "kling-2.0.md")
+    problems = validate_video_model(card, segment_seconds=5)
+    assert problems == []
