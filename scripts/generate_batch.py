@@ -92,23 +92,23 @@ def main(argv=None) -> int:
         # Чекпоинт ревью (спека ревью §4.3): отрезки строятся только на
         # принятых кадрах — done или accepted_with_notes.
         accepted = {"done", "accepted_with_notes"}
-        problems = {}
+        frame_problems = {}
         for s in shots["segments"]:
             for n in (s["start_frame"], s["end_frame"]):
                 frame_id = f"{shots['episode']}/storyboard/{n:03d}"
-                if frame_id in problems:
+                if frame_id in frame_problems:
                     continue
                 try:
                     status = manifest.get(frame_id)["status"]
                 except ManifestError:
-                    problems[frame_id] = "не генерировался"
+                    frame_problems[frame_id] = "не генерировался"
                     continue
                 if status not in accepted:
-                    problems[frame_id] = f"статус {status}"
-        if problems:
+                    frame_problems[frame_id] = f"статус {status}"
+        if frame_problems:
             print("КАДРЫ НЕ ПРИНЯТЫ РЕВЬЮ — стадия segments заблокирована:")
-            for frame_id in sorted(problems):
-                print(f"  - {frame_id}: {problems[frame_id]}")
+            for frame_id in sorted(frame_problems):
+                print(f"  - {frame_id}: {frame_problems[frame_id]}")
             return 3
 
     jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)

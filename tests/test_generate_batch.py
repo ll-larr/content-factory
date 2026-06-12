@@ -363,3 +363,13 @@ def test_idle_run_all_done(proj, monkeypatch, capsys):
     assert run(proj, "storyboard") == 0
     assert calls2["submitted"] == []
     assert "Всё уже сгенерировано" in capsys.readouterr().out
+
+
+def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    m = Manifest(proj / "manifest.json")
+    m.set_status("ep01/storyboard/001", "rejected", reject_reason="bad angle")
+    m.save()
+    assert run(proj, "segments") == 3
+    assert "статус rejected" in capsys.readouterr().out
