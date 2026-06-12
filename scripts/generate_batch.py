@@ -4,6 +4,7 @@
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage storyboard
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage segments
 Флаг --yes пропускает подтверждение сметы (для тестов/автоматизации).
+Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
 """
 from __future__ import annotations
 
@@ -101,10 +102,42 @@ def main(argv=None) -> int:
     if recovered:
         manifest.save()
 
+    # Цикл ревью (спека ревью §4.2): отклонённые уходят на перегенерацию по
+    # актуальному shots.json, пока не исчерпан лимит max_rejections; дальше —
+    # решение человека (review.py requeue).
+    blocked = []
+    requeued = False
+    for j in jobs:
+        item = manifest.get(j["item_id"])
+        if item["status"] != "rejected":
+            continue
+        if item.get("reject_count", 0) < project.max_rejections:
+            manifest.set_status(j["item_id"], "pending")
+            requeued = True
+        else:
+            blocked.append(j["item_id"])
+    if requeued:
+        manifest.save()
+    if blocked:
+        print(f"ЛИМИТ ОТКЛОНЕНИЙ ИСЧЕРПАН (max_rejections="
+              f"{project.max_rejections}) — требуется решение человека:")
+        for item_id in blocked:
+            it = manifest.get(item_id)
+            print(f"  - {item_id}: reject_count={it.get('reject_count', 0)}, "
+                  f"последняя причина: {it.get('reject_reason')}")
+
     todo = [j for j in jobs
             if manifest.get(j["item_id"])["status"] == "pending"]
     if not todo:
-        print("Всё уже сгенерировано — нечего делать.")
+        awaiting = [j["item_id"] for j in jobs
+                    if manifest.get(j["item_id"])["status"] == "generated"]
+        if awaiting:
+            print(f"Генерация не требуется; {len(awaiting)} единиц ждут ревью "
+                  f"(scripts/review.py):")
+            for item_id in awaiting:
+                print(f"  - {item_id}")
+        else:
+            print("Всё уже сгенерировано — нечего делать.")
         return 0
 
     # Спека §8 шаг 2: смета перед запуском
@@ -133,7 +166,7 @@ def main(argv=None) -> int:
                     str(result.get("error", "generation failed")))
             hf.download(job_id, j["dest"])
             manifest.set_status(
-                j["item_id"], "done", file=str(j["dest"]), job_id=job_id,
+                j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
         except hf.HiggsfieldError as e:
@@ -145,7 +178,7 @@ def main(argv=None) -> int:
             fail += 1
         manifest.save()
 
-    print(f"ИТОГ: готово {ok}, сбоев {fail}; "
+    print(f"ИТОГ: сгенерировано {ok} (ждут ревью), сбоев {fail}; "
           f"всего по проекту потрачено {manifest.credits_total():.0f} кредитов.")
     return 0 if fail == 0 else 1
 

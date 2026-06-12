@@ -69,11 +69,11 @@ def test_happy_path_storyboard(proj, monkeypatch):
     assert run(proj, "storyboard") == 0
     assert len(calls["submitted"]) == 3
     m = Manifest(proj / "manifest.json")
-    assert m.get("ep01/storyboard/001")["status"] == "done"
+    assert m.get("ep01/storyboard/001")["status"] == "generated"
     assert (proj / "episodes" / "ep01" / "storyboard" / "001.png").exists()
 
 
-def test_resume_skips_done(proj, monkeypatch):
+def test_resume_skips_generated(proj, monkeypatch):
     fake_hf(monkeypatch)
     run(proj, "storyboard")
     calls2 = fake_hf(monkeypatch)
@@ -163,7 +163,7 @@ def test_recover_stuck_generating_item(proj, monkeypatch):
     # Застрявший элемент должен был пройти submit и стать done
     assert any(True for _ in calls["submitted"])  # submit вызывался
     m2 = Manifest(proj / "manifest.json")
-    assert m2.get("ep01/storyboard/001")["status"] == "done"
+    assert m2.get("ep01/storyboard/001")["status"] == "generated"
 
 
 def test_job_id_persisted_when_wait_fails(proj, monkeypatch):
@@ -230,3 +230,53 @@ def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
         f"Ref '{resolved_ref}' не существует от CWD; "
         "refs должны резолвиться против project_dir"
     )
+
+
+def reject(proj, item_id, reason="не по сценарию"):
+    m = Manifest(proj / "manifest.json")
+    m.set_status(item_id, "rejected", reject_reason=reason)
+    m.save()
+
+
+def set_max_rejections(proj, value):
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["max_rejections"] = value
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+
+
+def test_rejected_autorequeued_and_regenerated(proj, monkeypatch):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    reject(proj, "ep01/storyboard/001")
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert len(calls2["submitted"]) == 1  # перегенерирован только отклонённый
+    m = Manifest(proj / "manifest.json")
+    item = m.get("ep01/storyboard/001")
+    assert item["status"] == "generated"
+    assert item["reject_count"] == 1  # журнал отклонений не сбрасывается
+
+
+def test_reject_limit_blocks_regeneration(proj, monkeypatch, capsys):
+    set_max_rejections(proj, 1)
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    reject(proj, "ep01/storyboard/001")
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert calls2["submitted"] == []  # лимит достигнут — не перегенерируем
+    out = capsys.readouterr().out
+    assert "ЛИМИТ ОТКЛОНЕНИЙ" in out
+    assert "ep01/storyboard/001" in out
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["status"] == "rejected"
+
+
+def test_idle_run_reports_awaiting_review(proj, monkeypatch, capsys):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    capsys.readouterr()  # сбросить вывод первого прогона
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert calls2["submitted"] == []
+    assert "ждут ревью" in capsys.readouterr().out
