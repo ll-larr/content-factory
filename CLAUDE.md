@@ -6,6 +6,7 @@
 ## Структура
 - scripts/factory/ — Python-пакет (project, manifest, models, shots, higgsfield_client)
 - scripts/generate_batch.py — батч-генерация кадров/отрезков
+- scripts/review.py — ревью генераций: accept/reject/requeue (статусы манифеста)
 - knowledge/ — карточки моделей (матрица возможностей + best practices) и контракт CLI
 - projects/ — контент-проекты (project.json, manifest.json, bible/, episodes/)
 - tests/ — pytest

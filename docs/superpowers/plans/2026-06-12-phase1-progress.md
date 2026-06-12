@@ -113,6 +113,27 @@ kling3_0/seedance_2_0 подтвердить их визуальную инте�
 - Совместимость: старые манифесты с `done` валидны, миграция не нужна. Тесты: переходы машины, гейт, автоперевод rejected→pending, лимит, review-CLI, оркестратор ставит `generated`.
 - Отвергнутые альтернативы: разрешить `done → rejected` (рушит семантику для жёсткого чекпоинта); отдельное поле `reviewed` рядом со status (два измерения состояния, YAGNI).
 
+### Итог (2026-06-12): фича РЕАЛИЗОВАНА
+
+Дизайн одобрен пользователем повторно в новой сессии; спека
+`docs/superpowers/specs/2026-06-12-frame-review-design.md`, план
+`docs/superpowers/plans/2026-06-12-frame-review.md` (superpowers:writing-plans →
+superpowers:subagent-driven-development, цикл как в фазе 1).
+
+Машина ревью: `pending → generating → generated → done | accepted_with_notes |
+rejected`; `rejected/accepted_with_notes → pending`; `done` терминален (= принято
+ревью); `reject_count` автоинкрементируется манифестом (caller задать не может).
+`scripts/review.py`: list/accept/accept-notes/reject/requeue (requeue — решение
+человека после лимита, счётчик не сбрасывается). Гейт segments: exit 3 до сметы.
+Лимит: `max_rejections` (project.json, int ≥ 0, дефолт 2; 0 = автоперегенерация
+запрещена). Старые манифесты с `done` валидны, миграция не нужна.
+
+Коммиты (фича + фиксы ревью): Task 1 `cc5e9b6`+`1e36aed`; Task 2
+`774ccfb`+`755c33f`; Task 3 `74f869b`+`1dc08bc`; Task 4 `34fec7b`+`90e4e2a`;
+Task 5 `66aab5a`+`c9a7509`. Тесты: **107 passed** (было 73 на старте фичи).
+Ветка `phase-1-generation` по-прежнему НЕ смержена в master — судьбу решить
+с пользователем (superpowers:finishing-a-development-branch).
+
 ## Решения, принятые в ходе выполнения (не отступать без причины)
 
 - **Экономика моделей отложена до пред-продового этапа** (решение пользователя 2026-06-12): подписка Starter куплена для тестов и будет заменена на более мощную; выбор дефолтных моделей по стоимости/безлимитам НЕ пересматривать сейчас — сделать последним шагом перед продовым запуском. Текущий план Starter: 202 кр, «selected models only», параллельность 2 видео/4 картинки; сметы: soul_v2 0.12 кр, seedream_v5_lite/flux_2 по 1 кр (заявлены unlimited — по факту не проверено), NB2 1.5 кр, kling3_0 10 кр/5с, seedance_2_0 fast 17.5 кр/5с (std 22.5), seedance1_5 4.8 кр/4с.
