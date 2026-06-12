@@ -125,3 +125,11 @@ def test_accepted_with_notes_allows_requeue(tmp_path):
     m.set_status("x", "accepted_with_notes", notes="фон темноват")
     m.set_status("x", "pending")
     assert m.get("x")["status"] == "pending"
+
+
+def test_reject_count_not_settable_by_caller(tmp_path):
+    """reject_count — вычисляемое поле: пишет только сам set_status."""
+    m = Manifest(tmp_path / "manifest.json")
+    review_ready(m)
+    with pytest.raises(ManifestError, match="unknown fields"):
+        m.set_status("x", "rejected", reject_reason="r", reject_count=99)
