@@ -373,3 +373,109 @@ def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
     m.save()
     assert run(proj, "segments") == 3
     assert "статус rejected" in capsys.readouterr().out
+
+
+# ---- Фаза 2: стадия audio ----
+
+AUDIO_CARD = ("---\nid: {mid}\ntype: audio\nfamily: {fam}\nstatus: verified\n"
+              "cost_tier: low\n---\n# {mid}\n")
+
+
+@pytest.fixture
+def aproj(proj):
+    """proj + аудио-модели в project.json, карточки audio и audio.json."""
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"].update({"tts": "inworld_text_to_speech",
+                         "music": "sonilo_music",
+                         "sfx": "mirelo_text_to_audio"})
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    kdir = Path("knowledge") / "audio"
+    kdir.mkdir(parents=True, exist_ok=True)
+    for mid, fam in (("inworld_text_to_speech", "inworld"),
+                     ("sonilo_music", "sonilo"),
+                     ("mirelo_text_to_audio", "mirelo")):
+        (kdir / f"{mid}.md").write_text(
+            AUDIO_CARD.format(mid=mid, fam=fam), encoding="utf-8")
+    (proj / "episodes" / "ep01" / "audio.json").write_text(json.dumps({
+        "voice_lines": [{"id": "vl-01", "speaker": "cat", "voice": "Ashley",
+                         "text": "Hello!", "segment": 1, "offset": 0.5}],
+        "music_cues": [{"id": "mus-01", "prompt": "calm space music",
+                        "duration": 10, "segment": 1, "offset": 0}],
+        "sfx": [{"id": "sfx-01", "prompt": "door creak", "duration": 3,
+                 "segment": 2, "offset": 1.0}],
+    }), encoding="utf-8")
+    return proj
+
+
+def run_audio(proj):
+    return gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "audio", "--yes"])
+
+
+def test_audio_happy_path(aproj, monkeypatch):
+    calls = fake_hf(monkeypatch)
+    assert run_audio(aproj) == 0
+    assert len(calls["submitted"]) == 3
+    m = Manifest(aproj / "manifest.json")
+    assert m.get("ep01/audio/vl-01")["status"] == "generated"
+    assert m.get("ep01/audio/vl-01")["kind"] == "voice"
+    assert m.get("ep01/audio/mus-01")["kind"] == "music"
+    assert m.get("ep01/audio/sfx-01")["kind"] == "sfx"
+    ep = aproj / "episodes" / "ep01" / "audio"
+    assert (ep / "voice" / "vl-01.mp3").exists()
+    assert (ep / "music" / "mus-01.mp3").exists()
+    assert (ep / "sfx" / "sfx-01.mp3").exists()
+
+
+def test_audio_params_passed(aproj, monkeypatch):
+    calls = fake_hf(monkeypatch)
+    run_audio(aproj)
+    voice_params = [p for p in calls["submitted"] if "voice" in p]
+    assert voice_params == [{"prompt": "Hello!", "voice": "Ashley"}]
+    dur_params = [p for p in calls["submitted"] if "duration" in p]
+    assert {p["duration"] for p in dur_params} == {10, 3}
+
+
+def test_audio_missing_plan(aproj, monkeypatch, capsys):
+    (aproj / "episodes" / "ep01" / "audio.json").unlink()
+    assert run_audio(aproj) == 1
+    assert "audio.json" in capsys.readouterr().out
+
+
+def test_audio_skeleton_card_blocks_before_estimate(aproj, monkeypatch, capsys):
+    estimate_called = []
+    monkeypatch.setattr(gb.hf, "estimate",
+                        lambda m, p: estimate_called.append(1) or 2.0)
+    card = Path("knowledge/audio/sonilo_music.md")
+    card.write_text(card.read_text(encoding="utf-8")
+                    .replace("status: verified", "status: skeleton"),
+                    encoding="utf-8")
+    assert run_audio(aproj) == 2
+    assert estimate_called == []
+    assert "skeleton" in capsys.readouterr().out
+
+
+def test_audio_missing_model_key(aproj, monkeypatch, capsys):
+    pj = json.loads((aproj / "project.json").read_text(encoding="utf-8"))
+    del pj["models"]["tts"]
+    (aproj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    assert run_audio(aproj) == 2
+    assert "models.tts" in capsys.readouterr().out
+
+
+def test_audio_resume_skips_generated(aproj, monkeypatch):
+    fake_hf(monkeypatch)
+    run_audio(aproj)
+    calls2 = fake_hf(monkeypatch)
+    assert run_audio(aproj) == 0
+    assert calls2["submitted"] == []
+
+
+def test_audio_invalid_segment_ref_raises(aproj, monkeypatch):
+    ep = aproj / "episodes" / "ep01"
+    data = json.loads((ep / "audio.json").read_text(encoding="utf-8"))
+    data["voice_lines"][0]["segment"] = 99
+    (ep / "audio.json").write_text(json.dumps(data), encoding="utf-8")
+    fake_hf(monkeypatch)
+    with pytest.raises(gb.AudioPlanError):
+        run_audio(aproj)

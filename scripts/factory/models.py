@@ -74,3 +74,15 @@ def validate_video_model(card: dict, segment_seconds: int) -> list[str]:
             f"{card['id']}: card is a skeleton — capabilities not verified, "
             "verify before spending credits")
     return problems
+
+
+def validate_audio_model(card: dict) -> list[str]:
+    """Валидация аудио-модели ДО траты кредитов (спека фазы 2 §5)."""
+    problems: list[str] = []
+    if card["type"] != "audio":
+        problems.append(f"{card['id']}: not an audio model")
+    if card.get("status") == "skeleton":
+        problems.append(
+            f"{card['id']}: card is a skeleton — capabilities not verified, "
+            "verify before spending credits")
+    return problems

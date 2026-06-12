@@ -1,13 +1,14 @@
-"""Батч-генерация кадров или видеоотрезков по shots.json (спека §8).
+"""Батч-генерация кадров, видеоотрезков или аудио по shots.json/audio.json (спека §8, фаза 2 §5).
 
 Запускать из корня репозитория:
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage storyboard
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage segments
+  python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage audio
 Флаг --yes пропускает подтверждение сметы (для тестов/автоматизации).
 Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
 
-Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию;
-3 segments заблокирован — кадры не приняты ревью.
+Коды выхода: 0 успех; 1 сбои/отмена/нет audio.json; 2 модель не прошла
+валидацию; 3 segments заблокирован — кадры не приняты ревью.
 """
 from __future__ import annotations
 
@@ -18,16 +19,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from factory import higgsfield_client as hf
+from factory.audio_plan import AudioPlanError, load_audio_plan
 from factory.manifest import Manifest, ManifestError
-from factory.models import find_card, validate_video_model
+from factory.models import find_card, validate_audio_model, validate_video_model
 from factory.project import load_project
 from factory.shots import load_shots
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
+AUDIO_EXT = ".mp3"  # формат выхода аудио-моделей Higgsfield (спайк фазы 2 Task 2)
+# (список audio.json, ключ models в project.json, kind манифеста, подпапка)
+AUDIO_GROUPS = (("voice_lines", "tts", "voice", "voice"),
+                ("music_cues", "music", "music", "music"),
+                ("sfx", "sfx", "sfx", "sfx"))
+
 
 def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
-               project_dir: Path) -> list[dict]:
+               project_dir: Path, audio_plan: dict | None = None) -> list[dict]:
     ep = shots["episode"]
     aspect = "9:16" if project.type == "shorts" else "16:9"
     jobs = []
@@ -44,7 +52,7 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                 "params": {"prompt": f["prompt"], "refs": resolved_refs,
                            "aspect_ratio": aspect},
             })
-    else:  # segments
+    elif stage == "segments":
         for s in shots["segments"]:
             jobs.append({
                 "item_id": f"{ep}/segments/{s['n']:03d}",
@@ -61,6 +69,20 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                     "aspect_ratio": aspect,
                 },
             })
+    else:  # audio (фаза 2 §5)
+        for list_name, model_key, kind, subdir in AUDIO_GROUPS:
+            for e in audio_plan[list_name]:
+                params = ({"prompt": e["text"], "voice": e["voice"]}
+                          if kind == "voice"
+                          else {"prompt": e["prompt"], "duration": e["duration"]})
+                jobs.append({
+                    "item_id": f"{ep}/audio/{e['id']}",
+                    "kind": kind,
+                    "model": project.models[model_key],
+                    "dest": episode_dir / "audio" / subdir
+                            / f"{e['id']}{AUDIO_EXT}",
+                    "params": params,
+                })
     return jobs
 
 
@@ -68,7 +90,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", required=True)
     ap.add_argument("--episode", required=True)
-    ap.add_argument("--stage", required=True, choices=["storyboard", "segments"])
+    ap.add_argument("--stage", required=True, choices=["storyboard", "segments", "audio"])
     ap.add_argument("--yes", action="store_true",
                     help="не спрашивать подтверждение сметы")
     args = ap.parse_args(argv)
@@ -111,7 +133,32 @@ def main(argv=None) -> int:
                 print(f"  - {frame_id}: {frame_problems[frame_id]}")
             return 3
 
-    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
+    audio_plan = None
+    if args.stage == "audio":
+        plan_path = episode_dir / "audio.json"
+        if not plan_path.exists():
+            print(f"Файл плана звука не найден: {plan_path}")
+            return 1
+        audio_plan = load_audio_plan(plan_path, shots)
+        problems = []
+        for list_name, model_key, _kind, _subdir in AUDIO_GROUPS:
+            if not audio_plan[list_name]:
+                continue
+            model_id = project.models.get(model_key)
+            if not model_id:
+                problems.append(f"models.{model_key} не задан в project.json "
+                                f"(нужен для {list_name})")
+                continue
+            card = find_card(KNOWLEDGE_DIR, model_id)
+            problems.extend(validate_audio_model(card))
+        if problems:
+            print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
+            for p in problems:
+                print(f"  - {p}")
+            return 2
+
+    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir,
+                      audio_plan)
     for j in jobs:
         manifest.add(j["item_id"], kind=j["kind"])
     manifest.save()
@@ -170,8 +217,9 @@ def main(argv=None) -> int:
     estimates = {j["item_id"]: hf.estimate(j["model"], j["params"])
                  for j in todo}
     total = sum(estimates.values())
+    models_used = ", ".join(sorted({j["model"] for j in todo}))
     print(f"СМЕТА: {len(todo)} генераций, ~{total:.0f} кредитов "
-          f"({args.stage}, модель {todo[0]['model']}).")
+          f"({args.stage}, модели: {models_used}).")
     if not args.yes:
         if input("Запустить? [y/N] ").strip().lower() != "y":
             print("Отменено.")

@@ -131,3 +131,21 @@ def test_validate_no_grid_field_means_no_check(tmp_path):
     card = load_card(write_card(tmp_path, CARD_WITHOUT_GRID) / "video" / "kling-2.0.md")
     problems = validate_video_model(card, segment_seconds=5)
     assert problems == []
+
+
+def test_validate_audio_model_ok():
+    from factory.models import validate_audio_model
+    card = {"id": "inworld_text_to_speech", "type": "audio", "status": "verified"}
+    assert validate_audio_model(card) == []
+
+
+def test_validate_audio_model_wrong_type():
+    from factory.models import validate_audio_model
+    card = {"id": "kling3_0", "type": "video", "status": "verified"}
+    assert any("not an audio model" in p for p in validate_audio_model(card))
+
+
+def test_validate_audio_model_skeleton():
+    from factory.models import validate_audio_model
+    card = {"id": "sonilo_music", "type": "audio", "status": "skeleton"}
+    assert any("skeleton" in p for p in validate_audio_model(card))
