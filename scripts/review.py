@@ -55,7 +55,7 @@ def main(argv=None) -> int:
                 continue
             print(f"{item_id}\t{it['status']}\t"
                   f"attempts={it.get('attempts', 0)}\t"
-                  f"rejects={it.get('reject_count', 0)}\t{it.get('file') or '-'}")
+                  f"reject_count={it.get('reject_count', 0)}\t{it.get('file') or '-'}")
         return 0
 
     # Мутации — всё или ничего: при ошибке манифест не сохраняется

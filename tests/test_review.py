@@ -1,4 +1,6 @@
 """Тесты review-CLI (спека ревью §5)."""
+import json
+
 import pytest
 
 import review
@@ -108,3 +110,18 @@ def test_list_on_missing_manifest_is_empty(tmp_path, capsys):
     pdir.mkdir(parents=True)
     assert run(pdir, "list") == 0
     assert capsys.readouterr().out == ""
+
+
+def test_list_on_legacy_manifest_without_reject_count(tmp_path, capsys):
+    """Старые манифесты (фаза 1) не имеют reject_count — list не падает (спека §7)."""
+    pdir = tmp_path / "projects" / "legacy"
+    pdir.mkdir(parents=True)
+    legacy = {"items": {"ep01/storyboard/001": {
+        "kind": "frame", "status": "done", "attempts": 1,
+        "credits_spent": 1.5, "file": "001.png", "job_id": "j1",
+        "reject_reason": None, "notes": None}}}
+    (pdir / "manifest.json").write_text(json.dumps(legacy), encoding="utf-8")
+    assert run(pdir, "list") == 0
+    out = capsys.readouterr().out
+    assert "ep01/storyboard/001" in out
+    assert "reject_count=0" in out
