@@ -130,7 +130,8 @@ rejected`; `rejected/accepted_with_notes → pending`; `done` терминале
 
 Коммиты (фича + фиксы ревью): Task 1 `cc5e9b6`+`1e36aed`; Task 2
 `774ccfb`+`755c33f`; Task 3 `74f869b`+`1dc08bc`; Task 4 `34fec7b`+`90e4e2a`;
-Task 5 `66aab5a`+`c9a7509`. Тесты: **107 passed** (было 73 на старте фичи).
+Task 5 `66aab5a`+`c9a7509`; финальное интеграционное ревью (READY TO MERGE) +
+полиш `64f155c`. Тесты: **108 passed** (было 73 на старте фичи).
 Ветка `phase-1-generation` по-прежнему НЕ смержена в master — судьбу решить
 с пользователем (superpowers:finishing-a-development-branch).
 
