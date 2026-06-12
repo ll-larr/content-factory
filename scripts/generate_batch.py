@@ -5,6 +5,9 @@
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage segments
 Флаг --yes пропускает подтверждение сметы (для тестов/автоматизации).
 Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
+
+Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию;
+3 segments заблокирован — кадры не приняты ревью.
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from factory import higgsfield_client as hf
-from factory.manifest import Manifest
+from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_video_model
 from factory.project import load_project
 from factory.shots import load_shots
@@ -85,6 +88,28 @@ def main(argv=None) -> int:
             for p in problems:
                 print(f"  - {p}")
             return 2
+
+        # Чекпоинт ревью (спека ревью §4.3): отрезки строятся только на
+        # принятых кадрах — done или accepted_with_notes.
+        accepted = {"done", "accepted_with_notes"}
+        problems = {}
+        for s in shots["segments"]:
+            for n in (s["start_frame"], s["end_frame"]):
+                frame_id = f"{shots['episode']}/storyboard/{n:03d}"
+                if frame_id in problems:
+                    continue
+                try:
+                    status = manifest.get(frame_id)["status"]
+                except ManifestError:
+                    problems[frame_id] = "не генерировался"
+                    continue
+                if status not in accepted:
+                    problems[frame_id] = f"статус {status}"
+        if problems:
+            print("КАДРЫ НЕ ПРИНЯТЫ РЕВЬЮ — стадия segments заблокирована:")
+            for frame_id in sorted(problems):
+                print(f"  - {frame_id}: {problems[frame_id]}")
+            return 3
 
     jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:

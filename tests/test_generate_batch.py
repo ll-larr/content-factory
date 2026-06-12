@@ -81,14 +81,51 @@ def test_resume_skips_generated(proj, monkeypatch):
     assert calls2["submitted"] == []  # ничего не сгенерировано повторно
 
 
+def accept_frames(proj, status="done"):
+    m = Manifest(proj / "manifest.json")
+    for item_id in list(m.data["items"]):
+        if m.get(item_id)["status"] == "generated":
+            m.set_status(item_id, status)
+    m.save()
+
+
 def test_segments_pass_start_end_frames(proj, monkeypatch):
     fake_hf(monkeypatch)
     run(proj, "storyboard")
+    accept_frames(proj)
     calls2 = fake_hf(monkeypatch)
     assert run(proj, "segments") == 0
     assert len(calls2["submitted"]) == 2
     assert "start_frame" in calls2["submitted"][0]
     assert "end_frame" in calls2["submitted"][0]
+
+
+def test_segments_blocked_until_frames_accepted(proj, monkeypatch, capsys):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")  # кадры в generated — ревью не пройдено
+    estimate_called = []
+    monkeypatch.setattr(gb.hf, "estimate",
+                        lambda m, p: estimate_called.append(1) or 2.0)
+    assert run(proj, "segments") == 3
+    assert estimate_called == []  # заблокировано ДО сметы и трат
+    out = capsys.readouterr().out
+    assert "заблокирована" in out
+    assert "ep01/storyboard/001" in out
+
+
+def test_segments_blocked_when_frames_never_generated(proj, monkeypatch, capsys):
+    fake_hf(monkeypatch)
+    assert run(proj, "segments") == 3  # storyboard вообще не запускался
+    assert "не генерировался" in capsys.readouterr().out
+
+
+def test_segments_pass_with_accepted_with_notes(proj, monkeypatch):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    accept_frames(proj, status="accepted_with_notes")
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "segments") == 0
+    assert len(calls2["submitted"]) == 2
 
 
 def test_skeleton_card_blocks_segments(proj, monkeypatch):
