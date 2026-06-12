@@ -22,18 +22,22 @@ from factory.shots import load_shots
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
 
-def build_jobs(stage: str, shots: dict, project, episode_dir: Path) -> list[dict]:
+def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
+               project_dir: Path) -> list[dict]:
     ep = shots["episode"]
     aspect = "9:16" if project.type == "shorts" else "16:9"
     jobs = []
     if stage == "storyboard":
         for f in shots["frames"]:
+            # refs в shots.json — относительно папки проекта; CLI резолвит
+            # пути от CWD, поэтому передаём абсолютные/CWD-совместимые пути.
+            resolved_refs = [str(project_dir / ref) for ref in f.get("refs", [])]
             jobs.append({
                 "item_id": f"{ep}/storyboard/{f['n']:03d}",
                 "kind": "frame",
                 "model": project.models["image"],
                 "dest": episode_dir / "storyboard" / f"{f['n']:03d}.png",
-                "params": {"prompt": f["prompt"], "refs": f.get("refs", []),
+                "params": {"prompt": f["prompt"], "refs": resolved_refs,
                            "aspect_ratio": aspect},
             })
     else:  # segments
@@ -81,7 +85,7 @@ def main(argv=None) -> int:
                 print(f"  - {p}")
             return 2
 
-    jobs = build_jobs(args.stage, shots, project, episode_dir)
+    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:
         manifest.add(j["item_id"], kind=j["kind"])
     manifest.save()

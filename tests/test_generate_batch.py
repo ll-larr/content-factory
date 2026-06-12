@@ -186,3 +186,47 @@ def test_job_id_persisted_when_wait_fails(proj, monkeypatch):
     item = m.get("ep01/storyboard/001")
     assert item["status"] == "pending"
     assert item["job_id"] == "job-abc123"  # job_id сохранён несмотря на сбой
+
+
+def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
+    """refs в shots.json — относительно папки проекта; в params должны быть
+    пути, существующие от CWD (корень репо), а не сырые относительные refs."""
+    # Мини-проект с refs у кадра 2
+    pdir = tmp_path / "projects" / "pilot"
+    ep = pdir / "episodes" / "ep01"
+    ep.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "space cats",
+        "audience": "6-9", "episodes": 1, "episode_duration_sec": 10,
+        "models": {"image": "nano_banana_flash", "video": "kling3_0"},
+    }), encoding="utf-8")
+    # Создаём ref-файл относительно папки проекта: bible/ref.png
+    ref_file = pdir / "bible" / "ref.png"
+    ref_file.parent.mkdir(parents=True)
+    ref_file.write_bytes(b"x")
+    (ep / "shots.json").write_text(json.dumps({
+        "episode": "ep01",
+        "frames": [
+            {"n": 1, "prompt": "a"},
+            {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]},
+        ],
+        "segments": [],
+    }), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    calls = fake_hf(monkeypatch)
+    result = gb.main(["--project", str(pdir), "--episode", "ep01",
+                      "--stage", "storyboard", "--yes"])
+    assert result == 0
+
+    # Находим submit с refs (кадр 2)
+    submitted_with_refs = [p for p in calls["submitted"] if p.get("refs")]
+    assert len(submitted_with_refs) == 1
+    resolved_ref = submitted_with_refs[0]["refs"][0]
+    # Резолвленный путь должен существовать относительно CWD (корень репо).
+    # Сырой "bible/ref.png" от CWD НЕ существует; правильный путь —
+    # "projects/pilot/bible/ref.png" (относительно tmp_path = CWD).
+    assert Path(resolved_ref).exists(), (
+        f"Ref '{resolved_ref}' не существует от CWD; "
+        "refs должны резолвиться против project_dir"
+    )
