@@ -86,6 +86,17 @@ def main(argv=None) -> int:
         manifest.add(j["item_id"], kind=j["kind"])
     manifest.save()
 
+    # Восстановление после прерванного прогона: элементы, оставшиеся в статусе
+    # generating (например, после KeyboardInterrupt), возвращаются в pending,
+    # чтобы следующий прогон их не потерял.
+    recovered = False
+    for j in jobs:
+        if manifest.get(j["item_id"])["status"] == "generating":
+            manifest.set_status(j["item_id"], "pending")
+            recovered = True
+    if recovered:
+        manifest.save()
+
     todo = [j for j in jobs
             if manifest.get(j["item_id"])["status"] == "pending"]
     if not todo:
@@ -109,6 +120,7 @@ def main(argv=None) -> int:
         manifest.set_status(j["item_id"], "generating")
         item["attempts"] += 1
         manifest.save()
+        job_id = None
         try:
             job_id = hf.submit(j["model"], j["params"])
             result = hf.wait(job_id)
@@ -121,8 +133,10 @@ def main(argv=None) -> int:
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
         except hf.HiggsfieldError as e:
-            # технический сбой -> вернуть в очередь (спека §13)
-            manifest.set_status(j["item_id"], "pending")
+            # технический сбой -> вернуть в очередь (спека §13);
+            # если job_id известен — сохраняем для соотнесения с логами Higgsfield
+            extra = {"job_id": job_id} if job_id is not None else {}
+            manifest.set_status(j["item_id"], "pending", **extra)
             print(f"  ! {j['item_id']}: {e}")
             fail += 1
         manifest.save()
@@ -133,4 +147,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # Защита от кириллицы в --help на legacy cp1251-консоли Windows
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())

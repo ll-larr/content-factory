@@ -113,6 +113,8 @@ def test_higgsfied_error_returns_to_pending(proj, monkeypatch):
     assert m.get("ep01/storyboard/001")["status"] == "pending"
     assert m.get("ep01/storyboard/002")["status"] == "pending"
     assert m.get("ep01/storyboard/003")["status"] == "pending"
+    # attempts должен быть инкрементирован (первый прогон = 1)
+    assert m.get("ep01/storyboard/001")["attempts"] == 1
 
 
 def test_retry_after_failure_runs_only_failed(proj, monkeypatch):
@@ -144,3 +146,43 @@ def test_skeleton_blocks_before_estimate(proj, monkeypatch):
     result = run(proj, "segments")
     assert result == 2
     assert estimate_called == []  # estimate не должен вызываться
+
+
+def test_recover_stuck_generating_item(proj, monkeypatch):
+    """Элемент в статусе generating после прерывания восстанавливается в pending
+    и обрабатывается следующим прогоном (регрессия: зависание после KeyboardInterrupt)."""
+    # Создаём манифест вручную: один item застрял в generating
+    m = Manifest(proj / "manifest.json")
+    m.add("ep01/storyboard/001", kind="frame")
+    m.set_status("ep01/storyboard/001", "generating")
+    m.save()
+
+    calls = fake_hf(monkeypatch)
+    result = run(proj, "storyboard")
+    assert result == 0
+    # Застрявший элемент должен был пройти submit и стать done
+    assert any(True for _ in calls["submitted"])  # submit вызывался
+    m2 = Manifest(proj / "manifest.json")
+    assert m2.get("ep01/storyboard/001")["status"] == "done"
+
+
+def test_job_id_persisted_when_wait_fails(proj, monkeypatch):
+    """Если submit прошёл, а wait упал — job_id сохраняется в манифесте
+    (регрессия: невозможно соотнести сбой с логами Higgsfield)."""
+    monkeypatch.setattr(gb.hf, "estimate", lambda m, p: 2.0)
+
+    def submit_ok(model, params):
+        return "job-abc123"
+
+    def wait_fail(job_id):
+        raise gb.hf.HiggsfieldError("timeout")
+
+    monkeypatch.setattr(gb.hf, "submit", submit_ok)
+    monkeypatch.setattr(gb.hf, "wait", wait_fail)
+
+    result = run(proj, "storyboard")
+    assert result == 1  # были сбои
+    m = Manifest(proj / "manifest.json")
+    item = m.get("ep01/storyboard/001")
+    assert item["status"] == "pending"
+    assert item["job_id"] == "job-abc123"  # job_id сохранён несмотря на сбой
