@@ -35,7 +35,9 @@ def test_accept_is_all_or_nothing(proj, capsys):
                "ep01/storyboard/002") == 1
     m = Manifest(proj / "manifest.json")
     assert m.get("ep01/storyboard/001")["status"] == "generated"
-    assert "not allowed" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "not allowed" in err
+    assert "Ни один из переходов не сохранён" in err
 
 
 def test_accept_notes(proj):
@@ -91,3 +93,18 @@ def test_list_shows_all_without_filter(proj, capsys):
     out = capsys.readouterr().out
     assert "ep01/storyboard/001" in out
     assert "ep01/storyboard/002" in out
+
+
+def test_requeue_from_generated_is_forbidden(proj, capsys):
+    # generated -> pending не входит в машину статусов: сначала ревью
+    assert run(proj, "requeue", "ep01/storyboard/001") == 1
+    assert "not allowed" in capsys.readouterr().err
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["status"] == "generated"
+
+
+def test_list_on_missing_manifest_is_empty(tmp_path, capsys):
+    pdir = tmp_path / "projects" / "empty"
+    pdir.mkdir(parents=True)
+    assert run(pdir, "list") == 0
+    assert capsys.readouterr().out == ""

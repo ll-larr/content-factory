@@ -34,16 +34,16 @@ def main(argv=None) -> int:
 
     p_notes = sub.add_parser("accept-notes",
                              help="generated -> accepted_with_notes")
-    p_notes.add_argument("id")
+    p_notes.add_argument("id", help="один item id")
     p_notes.add_argument("--notes", required=True)
 
     p_reject = sub.add_parser("reject", help="generated -> rejected")
-    p_reject.add_argument("id")
+    p_reject.add_argument("id", help="один item id")
     p_reject.add_argument("--reason", required=True)
 
     p_requeue = sub.add_parser(
         "requeue", help="rejected | accepted_with_notes -> pending")
-    p_requeue.add_argument("id")
+    p_requeue.add_argument("id", help="один item id")
 
     args = ap.parse_args(argv)
     manifest = Manifest(Path(args.project) / "manifest.json")
@@ -55,7 +55,7 @@ def main(argv=None) -> int:
                 continue
             print(f"{item_id}\t{it['status']}\t"
                   f"attempts={it.get('attempts', 0)}\t"
-                  f"rejects={it.get('reject_count', 0)}\t{it.get('file')}")
+                  f"rejects={it.get('reject_count', 0)}\t{it.get('file') or '-'}")
         return 0
 
     # Мутации — всё или ничего: при ошибке манифест не сохраняется
@@ -73,6 +73,8 @@ def main(argv=None) -> int:
             manifest.set_status(args.id, "pending")
     except ManifestError as e:
         print(f"ОШИБКА: {e}", file=sys.stderr)
+        if args.command == "accept" and len(args.ids) > 1:
+            print("Ни один из переходов не сохранён.", file=sys.stderr)
         return 1
     manifest.save()
     return 0
