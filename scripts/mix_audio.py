@@ -39,6 +39,8 @@ def segment_timeline(shots: dict, episode_dir: Path):
     durs: dict[int, float] = {}
     t = 0.0
     for s in sorted(shots["segments"], key=lambda item: item["n"]):
+        # TODO фаза 3: путь к файлу отрезка строится также в generate_batch.py
+        # и assemble.py — вынести конвенцию в одно место (factory/shots.py).
         f = episode_dir / "segments" / f"{s['n']:03d}.mp4"
         if not f.exists():
             raise FfmpegError(f"Файл отрезка не найден: {f}")
@@ -96,7 +98,13 @@ def main(argv=None) -> int:
             events = []
             for e in plan[list_name]:
                 item_id = f"{ep}/audio/{e['id']}"
-                path = Path(manifest.get(item_id)["file"])
+                # Гейт выше гарантирует наличие item; ManifestError здесь —
+                # рассинхрон манифеста, превращаем в понятную ошибку exit 1.
+                try:
+                    item = manifest.get(item_id)
+                except ManifestError as exc:
+                    raise FfmpegError(str(exc)) from exc
+                path = Path(item["file"])
                 if not path.exists():
                     raise FfmpegError(
                         f"Аудиофайл из манифеста не найден: {path}")
@@ -112,7 +120,7 @@ def main(argv=None) -> int:
         speech = collect("voice_lines", VOICE_VOLUME) + collect("sfx", SFX_VOLUME)
         music = collect("music_cues", MUSIC_VOLUME)
     except FfmpegError as e:
-        print(f"ОШИБКА: {e}")
+        print(f"ОШИБКА ffmpeg: {e}")
         return 1
 
     inputs: list[str] = []

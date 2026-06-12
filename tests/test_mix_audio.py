@@ -146,3 +146,34 @@ def test_missing_audio_file(proj, capsys):
     (proj / "episodes" / "ep01" / "audio" / "voice" / "vl-01.m4a").unlink()
     assert run(proj) == 1
     assert "не найден" in capsys.readouterr().out
+
+
+def test_tmp_removed_on_ffmpeg_failure(proj, capsys):
+    # Портим аудиофайл: ffmpeg упадёт на декодировании входа
+    bad = proj / "episodes" / "ep01" / "audio" / "voice" / "vl-01.m4a"
+    bad.write_bytes(b"not an audio file")
+    assert run(proj) == 1
+    audio_dir = proj / "episodes" / "ep01" / "audio"
+    assert not (audio_dir / "mix.tmp.m4a").exists()
+    assert not (audio_dir / "mix.m4a").exists()
+    assert "ОШИБКА ffmpeg" in capsys.readouterr().out
+
+
+def test_two_music_cues_exercise_amix(proj, make_tone):
+    ep = proj / "episodes" / "ep01"
+    data = json.loads((ep / "audio.json").read_text(encoding="utf-8"))
+    data["voice_lines"] = []
+    data["sfx"] = []
+    data["music_cues"].append({"id": "mus-02", "prompt": "calm2",
+                               "duration": 1, "segment": 2, "offset": 0})
+    (ep / "audio.json").write_text(json.dumps(data), encoding="utf-8")
+    f = make_tone(ep / "audio" / "music" / "mus-02.m4a", 1.0)
+    m = Manifest(proj / "manifest.json")
+    m.add("ep01/audio/mus-02", kind="music")
+    m.set_status("ep01/audio/mus-02", "generating")
+    m.set_status("ep01/audio/mus-02", "generated", file=str(f))
+    m.set_status("ep01/audio/mus-02", "done")
+    m.save()
+    assert run(proj) == 0
+    assert mix_path(proj).exists()
+    assert abs(probe_duration(mix_path(proj)) - 4.0) < 0.3
