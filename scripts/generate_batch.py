@@ -27,7 +27,7 @@ from factory.shots import load_shots
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
-AUDIO_EXT = ".mp3"  # формат выхода аудио-моделей Higgsfield (спайк фазы 2 Task 2)
+AUDIO_EXT = ".mp3"  # предварительно; уточнить после спайка аудио-моделей (Task 2)
 # (список audio.json, ключ models в project.json, kind манифеста, подпапка)
 AUDIO_GROUPS = (("voice_lines", "tts", "voice", "voice"),
                 ("music_cues", "music", "music", "music"),
@@ -70,6 +70,7 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                 },
             })
     else:  # audio (фаза 2 §5)
+        assert audio_plan is not None, "stage audio требует audio_plan"
         for list_name, model_key, kind, subdir in AUDIO_GROUPS:
             for e in audio_plan[list_name]:
                 params = ({"prompt": e["text"], "voice": e["voice"]}
@@ -140,20 +141,20 @@ def main(argv=None) -> int:
             print(f"Файл плана звука не найден: {plan_path}")
             return 1
         audio_plan = load_audio_plan(plan_path, shots)
-        problems = []
+        audio_problems = []
         for list_name, model_key, _kind, _subdir in AUDIO_GROUPS:
             if not audio_plan[list_name]:
                 continue
             model_id = project.models.get(model_key)
             if not model_id:
-                problems.append(f"models.{model_key} не задан в project.json "
-                                f"(нужен для {list_name})")
+                audio_problems.append(f"models.{model_key} не задан в project.json "
+                                      f"(нужен для {list_name})")
                 continue
             card = find_card(KNOWLEDGE_DIR, model_id)
-            problems.extend(validate_audio_model(card))
-        if problems:
+            audio_problems.extend(validate_audio_model(card))
+        if audio_problems:
             print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
-            for p in problems:
+            for p in audio_problems:
                 print(f"  - {p}")
             return 2
 

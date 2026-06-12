@@ -477,5 +477,19 @@ def test_audio_invalid_segment_ref_raises(aproj, monkeypatch):
     data["voice_lines"][0]["segment"] = 99
     (ep / "audio.json").write_text(json.dumps(data), encoding="utf-8")
     fake_hf(monkeypatch)
-    with pytest.raises(gb.AudioPlanError):
+    with pytest.raises(gb.AudioPlanError, match="segment 99"):
         run_audio(aproj)
+
+
+def test_audio_voice_only_plan_without_music_sfx_models(aproj, monkeypatch):
+    pj = json.loads((aproj / "project.json").read_text(encoding="utf-8"))
+    del pj["models"]["music"]
+    del pj["models"]["sfx"]
+    (aproj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    (aproj / "episodes" / "ep01" / "audio.json").write_text(json.dumps({
+        "voice_lines": [{"id": "vl-01", "speaker": "cat", "voice": "Ashley",
+                         "text": "Hello!", "segment": 1, "offset": 0.5}],
+    }), encoding="utf-8")
+    calls = fake_hf(monkeypatch)
+    assert run_audio(aproj) == 0
+    assert len(calls["submitted"]) == 1

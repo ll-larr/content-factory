@@ -88,3 +88,10 @@ def test_entry_without_id_raises(tmp_path):
     del data["sfx"][0]["id"]
     with pytest.raises(AudioPlanError, match="without id"):
         load_audio_plan(write_plan(tmp_path, data), SHOTS)
+
+
+def test_missing_segment_field_raises(tmp_path):
+    data = json.loads(json.dumps(VALID))
+    del data["voice_lines"][0]["segment"]
+    with pytest.raises(AudioPlanError, match="missing 'segment'"):
+        load_audio_plan(write_plan(tmp_path, data), SHOTS)

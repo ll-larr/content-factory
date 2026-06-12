@@ -50,6 +50,8 @@ def load_audio_plan(path: Path, shots: dict) -> dict:
             if list_name in NEEDS_DURATION:
                 _check_number(eid, "duration", entry.get("duration"), 0, True)
             seg = entry.get("segment")
+            if seg is None:
+                raise AudioPlanError(f"{eid}: missing 'segment'")
             if seg not in seg_numbers:
                 raise AudioPlanError(
                     f"{eid}: segment {seg!r} references missing segment")
