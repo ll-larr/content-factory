@@ -111,6 +111,7 @@ def main(argv=None) -> int:
         item = manifest.get(j["item_id"])
         if item["status"] != "rejected":
             continue
+        # При max_rejections=0 автоперегенерация запрещена: любой reject → blocked
         if item.get("reject_count", 0) < project.max_rejections:
             manifest.set_status(j["item_id"], "pending")
             requeued = True

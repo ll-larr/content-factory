@@ -160,7 +160,7 @@ def test_recover_stuck_generating_item(proj, monkeypatch):
     calls = fake_hf(monkeypatch)
     result = run(proj, "storyboard")
     assert result == 0
-    # Застрявший элемент должен был пройти submit и стать done
+    # Застрявший элемент должен был пройти submit и стать generated (ждёт ревью)
     assert any(True for _ in calls["submitted"])  # submit вызывался
     m2 = Manifest(proj / "manifest.json")
     assert m2.get("ep01/storyboard/001")["status"] == "generated"
@@ -280,3 +280,49 @@ def test_idle_run_reports_awaiting_review(proj, monkeypatch, capsys):
     assert run(proj, "storyboard") == 0
     assert calls2["submitted"] == []
     assert "ждут ревью" in capsys.readouterr().out
+
+
+def test_max_rejections_zero_blocks_immediately(proj, monkeypatch, capsys):
+    set_max_rejections(proj, 0)
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    reject(proj, "ep01/storyboard/001")
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert calls2["submitted"] == []
+    assert "ЛИМИТ ОТКЛОНЕНИЙ" in capsys.readouterr().out
+
+
+def test_blocked_items_do_not_prevent_pending_generation(proj, monkeypatch, capsys):
+    """Достигший лимита item пропускается, но остальные pending генерируются."""
+    set_max_rejections(proj, 1)
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    reject(proj, "ep01/storyboard/001")  # reject_count=1 = лимит → blocked
+    # 002 возвращаем в очередь легальным путём (reject + ручной requeue)
+    m = Manifest(proj / "manifest.json")
+    m.set_status("ep01/storyboard/002", "rejected", reject_reason="r")
+    m.set_status("ep01/storyboard/002", "pending")
+    m.save()
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert len(calls2["submitted"]) == 1  # только 002
+    out = capsys.readouterr().out
+    assert "ЛИМИТ ОТКЛОНЕНИЙ" in out
+    m2 = Manifest(proj / "manifest.json")
+    assert m2.get("ep01/storyboard/001")["status"] == "rejected"
+    assert m2.get("ep01/storyboard/002")["status"] == "generated"
+
+
+def test_idle_run_all_done(proj, monkeypatch, capsys):
+    fake_hf(monkeypatch)
+    run(proj, "storyboard")
+    m = Manifest(proj / "manifest.json")
+    for item_id in list(m.data["items"]):
+        m.set_status(item_id, "done")  # ревью: всё принято
+    m.save()
+    capsys.readouterr()
+    calls2 = fake_hf(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert calls2["submitted"] == []
+    assert "Всё уже сгенерировано" in capsys.readouterr().out
