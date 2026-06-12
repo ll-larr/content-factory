@@ -20,7 +20,7 @@
 | Task 5: карточки моделей | ✅ done | commit `6780473`; 18 файлов с реальными id из CLI; spec-ревью пройдено; quality-ревью пропущено осознанно (только docs); все карточки `status: skeleton` до генерационного спайка |
 | Task 6: factory/models.py | ✅ done | commits `5ef3ed6` + `1709591` (фикс: битые карточки не ломают find_card) |
 | Task 7: factory/shots.py | ✅ done | commits `f532af7` + `08d3ee8` (фиксы: доменные ошибки на битых записях, полная цепочка отрезков обязательна) |
-| Task 8: higgsfield_client.py | ▶ разблокирована | контракт известен (`knowledge/higgsfield-cli.md`); ВАЖНО: download = HTTP по result_url, create возвращает массив id, статусы in_progress/completed |
+| Task 8: higgsfield_client.py | ✅ done | commits `f88e3ae` + `c70ff14` (фиксы ревью: wait-статусы, атомарный download, utf-8+timeout subprocess); оба ревью пройдены; живой smoke estimate=1.5 |
 | Task 9: generate_batch.py | ожидает | после 5 и 8 |
 | Task 10: финал + smoke | ожидает | smoke-прогон тратит кредиты — подтверждение пользователя |
 | Task 11 (добавлена 2026-06-12): убрать инвариант сцепки отрезков | ожидает | решение пользователя; выполнять последней из кодовых задач, ДО smoke Task 10 — см. раздел «Task 11» ниже |
