@@ -1,0 +1,34 @@
+{
+  "items": {
+    "ep01/storyboard/001": {
+      "kind": "frame",
+      "status": "done",
+      "attempts": 1,
+      "credits_spent": 1.5,
+      "file": "projects\\_smoke\\episodes\\ep01\\storyboard\\001.png",
+      "job_id": "ac3e5cdc-906e-42b4-953d-bf70858c361e",
+      "reject_reason": null,
+      "notes": null
+    },
+    "ep01/storyboard/002": {
+      "kind": "frame",
+      "status": "done",
+      "attempts": 1,
+      "credits_spent": 1.5,
+      "file": "projects\\_smoke\\episodes\\ep01\\storyboard\\002.png",
+      "job_id": "1fe2a641-9de0-4f1d-8fae-1795fa25510e",
+      "reject_reason": null,
+      "notes": null
+    },
+    "ep01/segments/001": {
+      "kind": "segment",
+      "status": "done",
+      "attempts": 1,
+      "credits_spent": 10.0,
+      "file": "projects\\_smoke\\episodes\\ep01\\segments\\001.mp4",
+      "job_id": "ea1a24c3-ef74-4eea-a399-e9b47cc6bee6",
+      "reject_reason": null,
+      "notes": null
+    }
+  }
+}

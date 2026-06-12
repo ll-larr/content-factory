@@ -1,0 +1,9 @@
+{
+  "name": "_smoke",
+  "type": "animated_series",
+  "theme": "space cats",
+  "audience": "6-9",
+  "episodes": 1,
+  "episode_duration_sec": 10,
+  "models": {"image": "nano_banana_flash", "video": "kling3_0"}
+}

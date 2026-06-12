@@ -2,7 +2,7 @@
 id: kling3_0
 type: video
 family: kling
-status: skeleton
+status: verified
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 10
@@ -58,5 +58,14 @@ cost_tier: medium
 
 **Смета:** 10 кредитов за 5с (mode std).
 
-**Ожидает спайка (Task 2):** реальная интерполяция start→end, визуальное качество,
-стабильность персонажа в движении.
+## Проверено генерацией (smoke 2026-06-12)
+
+- **Start/end интерполяция работает**: первый кадр видео = start-image (кот стоит),
+  последний = end-image (лапа на кнопке), движение руки осмысленное, сцена и
+  персонаж стабильны (spike/kling3_verify.mp4, 5с, 1280×720, sound off).
+- Стиль кадров слегка «перерисовывается» под Kling (мягче контуры исходного
+  flat 2D) — композиция и персонаж сохраняются.
+- **Фактическое списание 7.5 кр при смете 10** (starter-подписка): реальные
+  списания могут быть НИЖЕ смет — сверять по `higgsfield account transactions`.
+- В params ответа есть недокументированные поля (`cfg_scale: 0.5`,
+  `multi_shots`, `enhance_prompt: false` и др.) — дефолты CLI.

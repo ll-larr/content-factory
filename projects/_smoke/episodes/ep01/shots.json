@@ -1,0 +1,22 @@
+{
+  "episode": "ep01",
+  "frames": [
+    {
+      "n": 1,
+      "prompt": "flat 2D cartoon, orange cat astronaut standing in a spaceship corridor, a control panel with one large red button on the wall beside him, full body, simple shapes, bold outlines"
+    },
+    {
+      "n": 2,
+      "prompt": "flat 2D cartoon, the same orange cat astronaut pressing the large red button on the same control panel on the wall to his right, on the right side of the frame, same spaceship corridor and camera angle, full body, simple shapes, bold outlines",
+      "refs": ["episodes/ep01/storyboard/001.png"]
+    }
+  ],
+  "segments": [
+    {
+      "n": 1,
+      "start_frame": 1,
+      "end_frame": 2,
+      "prompt": "the cat reaches out and presses the large red button on the control panel, static camera"
+    }
+  ]
+}
