@@ -1,8 +1,11 @@
-"""Манифест проекта — память завода (спека §10).
+"""Манифест проекта — память завода (спека §10; машина ревью — спека
+docs/superpowers/specs/2026-06-12-frame-review-design.md §3).
 
-Статусы: pending -> generating -> done | rejected | accepted_with_notes.
+Статусы: pending -> generating -> generated (ждёт ревью) | pending (техсбой).
+Ревью: generated -> done | accepted_with_notes | rejected.
 rejected/accepted_with_notes -> pending = перегенерация.
-generating -> pending = возврат в очередь после технического сбоя.
+done = принято ревью, терминален.
+reject_count инкрементируется автоматически при каждом переходе в rejected.
 """
 from __future__ import annotations
 
@@ -10,11 +13,14 @@ import json
 import os
 from pathlib import Path
 
-STATUSES = {"pending", "generating", "done", "rejected", "accepted_with_notes"}
-KNOWN_FIELDS = {"file", "job_id", "credits_spent", "reject_reason", "notes", "attempts"}
+STATUSES = {"pending", "generating", "generated", "done", "rejected",
+            "accepted_with_notes"}
+KNOWN_FIELDS = {"file", "job_id", "credits_spent", "reject_reason", "notes",
+                "attempts", "reject_count"}
 ALLOWED = {
     "pending": {"generating"},
-    "generating": {"done", "rejected", "accepted_with_notes", "pending"},
+    "generating": {"generated", "pending"},
+    "generated": {"done", "accepted_with_notes", "rejected"},
     "rejected": {"pending"},
     "accepted_with_notes": {"pending"},
     "done": set(),
@@ -43,7 +49,7 @@ class Manifest:
         self.data["items"].setdefault(item_id, {
             "kind": kind, "status": "pending", "attempts": 0,
             "credits_spent": 0.0, "file": None, "job_id": None,
-            "reject_reason": None, "notes": None,
+            "reject_reason": None, "notes": None, "reject_count": 0,
         })
 
     def get(self, item_id: str) -> dict:
@@ -64,6 +70,8 @@ class Manifest:
                 f"{item_id}: {item['status']} -> {status} is not allowed")
         if status == "rejected" and not fields.get("reject_reason"):
             raise ManifestError(f"{item_id}: rejected requires reject_reason")
+        if status == "rejected":
+            fields["reject_count"] = item.get("reject_count", 0) + 1
         item.update(status=status, **fields)
 
     def pending(self, kind: str | None = None) -> list[str]:
