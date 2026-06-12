@@ -39,6 +39,15 @@ def test_unchained_segments_allowed(tmp_path):
     assert len(data["segments"]) == 2
 
 
+def test_same_start_end_frame_allowed(tmp_path):
+    # статичный план: start == end — валидно, интерпретация на стороне видеомодели
+    good = json.loads(json.dumps(GOOD))
+    good["segments"][1] = {"n": 2, "start_frame": 2, "end_frame": 2, "prompt": "x"}
+    good["frames"][1].pop("refs")
+    data = load_shots(write(tmp_path, good), tmp_path)
+    assert len(data["segments"]) == 2
+
+
 def test_missing_ref_raises(tmp_path):
     with pytest.raises(ShotsError, match="missing ref"):
         load_shots(write(tmp_path, GOOD), tmp_path)  # png не создан
