@@ -65,8 +65,8 @@ def main(argv=None) -> int:
         return 3
 
     files = []
-    for s in sorted(segments, key=lambda s: s["n"]):
-        f = episode_dir / "segments" / f"{s['n']:03d}.mp4"
+    for seg in sorted(segments, key=lambda item: item["n"]):
+        f = episode_dir / "segments" / f"{seg['n']:03d}.mp4"
         if not f.exists():
             print(f"Файл отрезка не найден: {f}")
             return 1
@@ -74,6 +74,8 @@ def main(argv=None) -> int:
 
     dest = episode_dir / "final" / f"{args.episode}.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # Не <имя>.mp4.tmp (конвенция репо): ffmpeg выбирает муксер по расширению,
+    # поэтому .mp4 должен остаться последним суффиксом.
     tmp = dest.with_name(dest.stem + ".tmp.mp4")
 
     inputs: list[str] = []
@@ -91,7 +93,12 @@ def main(argv=None) -> int:
         print(f"ОШИБКА ffmpeg: {e}")
         return 1
 
-    fact = probe_duration(dest)
+    try:
+        fact = probe_duration(dest)
+    except FfmpegError as e:
+        print(f"ПРЕДУПРЕЖДЕНИЕ: не удалось проверить длительность: {e}")
+        print(f"Собрано: {dest} ({n} отрезков, без звука).")
+        return 0
     plan = len(segments) * project.segment_seconds
     if abs(fact - plan) > plan * DURATION_TOLERANCE:
         print(f"ВНИМАНИЕ: длительность {fact:.2f}с вне допуска ±5% "

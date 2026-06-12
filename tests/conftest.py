@@ -11,7 +11,7 @@ import pytest
 def _ffmpeg(args):
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + args,
-        check=True)
+        check=True, capture_output=True, encoding="utf-8", errors="replace")
 
 
 @pytest.fixture

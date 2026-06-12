@@ -120,3 +120,16 @@ def test_no_segments_in_shots(proj, capsys):
     (ep / "shots.json").write_text(json.dumps(shots), encoding="utf-8")
     assert run(proj) == 1
     assert "собирать нечего" in capsys.readouterr().out
+
+
+def test_probe_failure_after_assembly_returns_zero(proj, monkeypatch, capsys):
+    """Сбой ffprobe ПОСЛЕ успешной сборки не роняет процесс: файл собран, exit 0."""
+    from factory.ffmpeg_tools import FfmpegError
+
+    def broken_probe(path):
+        raise FfmpegError("probe сломан")
+
+    monkeypatch.setattr(assemble, "probe_duration", broken_probe)
+    assert run(proj) == 0
+    assert (proj / "episodes" / "ep01" / "final" / "ep01.mp4").exists()
+    assert "не удалось проверить длительность" in capsys.readouterr().out
