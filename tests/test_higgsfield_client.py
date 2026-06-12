@@ -1,5 +1,6 @@
 """Тесты адаптера Higgsfield CLI (scripts/factory/higgsfield_client.py)."""
 import json
+import subprocess
 import pytest
 from factory import higgsfield_client as hf
 
@@ -10,7 +11,7 @@ def patch_run(monkeypatch, stdout="{}", returncode=0, stderr=""):
     class P:
         pass
 
-    def fake_run(args, capture_output, text):
+    def fake_run(args, **kwargs):
         calls.append(args)
         p = P()
         p.returncode, p.stdout, p.stderr = returncode, stdout, stderr
@@ -65,6 +66,14 @@ def test_refs_none_skipped(monkeypatch):
     assert "--image" not in calls[0]
 
 
+def test_none_param_skipped(monkeypatch):
+    """Любой параметр со значением None должен пропускаться."""
+    calls = patch_run(monkeypatch, stdout=json.dumps(["j-3"]))
+    hf.submit("nano_banana_flash", {"prompt": "test", "duration": None, "refs": None})
+    assert "--duration" not in calls[0]
+    assert "--image" not in calls[0]
+
+
 def test_nonzero_exit_raises(monkeypatch):
     patch_run(monkeypatch, returncode=1, stderr="quota exceeded")
     with pytest.raises(hf.HiggsfieldError, match="quota exceeded"):
@@ -101,6 +110,59 @@ def test_wait_timeout_raises(monkeypatch):
         hf.wait("j-1", timeout_sec=0, interval_sec=1)
 
 
+def test_wait_empty_status_keeps_polling(monkeypatch):
+    """Пустой статус (фолбэк при не-JSON ответе) не должен прерывать опрос."""
+    answers = [{"status": ""}, {"status": "completed"}]
+    monkeypatch.setattr(hf, "poll", lambda j: answers.pop(0))
+    monkeypatch.setattr(hf.time, "sleep", lambda s: None)
+    assert hf.wait("j-1")["status"] == "completed"
+
+
+def test_wait_queued_keeps_polling(monkeypatch):
+    """Статус queued не является терминальным — продолжаем опрос."""
+    answers = [{"status": "queued"}, {"status": "in_progress"}, {"status": "completed"}]
+    monkeypatch.setattr(hf, "poll", lambda j: answers.pop(0))
+    monkeypatch.setattr(hf.time, "sleep", lambda s: None)
+    assert hf.wait("j-1")["status"] == "completed"
+
+
+def test_wait_unknown_nonempty_status_returns(monkeypatch):
+    """Неизвестный непустой статус → возвращаем, решает вызывающий."""
+    monkeypatch.setattr(hf, "poll", lambda j: {"status": "cancelled"})
+    monkeypatch.setattr(hf.time, "sleep", lambda s: None)
+    result = hf.wait("j-1")
+    assert result["status"] == "cancelled"
+
+
+def test_run_timeout_raises_higgsfield_error(monkeypatch):
+    """subprocess.TimeoutExpired → HiggsfieldError с понятным сообщением."""
+    def fake_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, 300)
+
+    monkeypatch.setattr(hf.subprocess, "run", fake_run)
+    with pytest.raises(hf.HiggsfieldError, match="[Tt]imeout|timeout"):
+        hf.poll("j-1")
+
+
+def test_run_passes_encoding_utf8(monkeypatch):
+    """_run должен передавать encoding='utf-8' в subprocess.run."""
+    captured_kwargs = {}
+
+    class P:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    def fake_run(args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return P()
+
+    monkeypatch.setattr(hf.subprocess, "run", fake_run)
+    hf.poll("j-1")
+    assert captured_kwargs.get("encoding") == "utf-8"
+    assert captured_kwargs.get("timeout") == 300
+
+
 def test_download_fetches_result_url(monkeypatch, tmp_path):
     monkeypatch.setattr(hf, "poll", lambda j: {"status": "completed", "result_url": "http://x/r.png"})
 
@@ -114,8 +176,20 @@ def test_download_fetches_result_url(monkeypatch, tmp_path):
 
 
 def test_download_missing_file_raises(monkeypatch, tmp_path):
+    """После атомарного rename файл должен быть у dest.
+    Если _fetch создаёт tmp, но os.replace не может его переместить — любая ошибка.
+    Проверяем: _fetch создаёт tmp → os.replace → dest.exists() проверка.
+    Имитируем: _fetch создаёт tmp файл, но потом os.replace заменяем на no-op → HiggsfieldError missing.
+    """
     monkeypatch.setattr(hf, "poll", lambda j: {"status": "completed", "result_url": "http://x/r.png"})
-    monkeypatch.setattr(hf, "_fetch", lambda url, dest: None)  # «скачал», но файла нет
+
+    # _fetch создаёт tmp, но os.replace — no-op (файл не перемещается в dest)
+    def fake_fetch(url, dest_str):
+        from pathlib import Path
+        Path(dest_str).write_bytes(b"data")
+
+    monkeypatch.setattr(hf, "_fetch", fake_fetch)
+    monkeypatch.setattr(hf.os, "replace", lambda src, dst: None)  # имитируем сбой rename
     with pytest.raises(hf.HiggsfieldError, match="missing"):
         hf.download("j-1", tmp_path / "out.png")
 
@@ -124,3 +198,53 @@ def test_download_incomplete_job_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(hf, "poll", lambda j: {"status": "in_progress", "result_url": ""})
     with pytest.raises(hf.HiggsfieldError):
         hf.download("j-1", tmp_path / "out.png")
+
+
+def test_download_failed_job_raises_with_message(monkeypatch, tmp_path):
+    """Задача со статусом failed → сообщение о необходимости перегенерации."""
+    monkeypatch.setattr(hf, "poll", lambda j: {"status": "failed", "result_url": ""})
+    with pytest.raises(hf.HiggsfieldError, match="перегенерац"):
+        hf.download("j-1", tmp_path / "out.png")
+
+
+def test_download_completed_no_url_raises(monkeypatch, tmp_path):
+    """completed без result_url → понятное сообщение."""
+    monkeypatch.setattr(hf, "poll", lambda j: {"status": "completed", "result_url": ""})
+    with pytest.raises(hf.HiggsfieldError, match="result_url пуст"):
+        hf.download("j-1", tmp_path / "out.png")
+
+
+def test_download_tmp_cleanup_on_error(monkeypatch, tmp_path):
+    """При ошибке во время скачивания tmp-файл должен быть удалён."""
+    dest = tmp_path / "out.mp4"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    monkeypatch.setattr(hf, "poll", lambda j: {"status": "completed", "result_url": "http://x/r.mp4"})
+
+    def bad_fetch(url, dest_str):
+        from pathlib import Path
+        Path(dest_str).write_bytes(b"partial")
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(hf, "_fetch", bad_fetch)
+    with pytest.raises(OSError, match="connection reset"):
+        hf.download("j-1", dest)
+
+    # tmp-файл должен быть удалён
+    assert not tmp.exists()
+
+
+def test_download_atomic_write(monkeypatch, tmp_path):
+    """Файл появляется у dest, а не остаётся в tmp."""
+    dest = tmp_path / "out.mp4"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    monkeypatch.setattr(hf, "poll", lambda j: {"status": "completed", "result_url": "http://x/r.mp4"})
+
+    def fake_fetch(url, dest_str):
+        from pathlib import Path
+        Path(dest_str).write_bytes(b"video")
+
+    monkeypatch.setattr(hf, "_fetch", fake_fetch)
+    out = hf.download("j-1", dest)
+    assert out == dest
+    assert dest.exists()
+    assert not tmp.exists()

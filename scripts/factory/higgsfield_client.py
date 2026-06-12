@@ -16,6 +16,7 @@ CLI-бинаря ``higgsfield``. Источник правды — ``knowledge/h
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -25,15 +26,29 @@ from pathlib import Path
 # Имя бинаря. На Windows shutil.which найдёт higgsfield.cmd через PATHEXT.
 _CLI_NAME = "higgsfield"
 
+# Кэш результата shutil.which — вычисляется один раз при первом вызове _cli_binary().
+_CLI_PATH: str | None = None
+_CLI_RESOLVED: bool = False
+
+# Статусы, при которых продолжаем опрос (не терминальные, включая пустую строку).
+_POLLING_STATUSES = {"in_progress", "queued", ""}
+
 
 class HiggsfieldError(RuntimeError):
     """Ошибка при работе с Higgsfield CLI или результатами вызова."""
 
 
 def _cli_binary() -> str:
-    """Вернуть полный путь к бинарю CLI (или голое имя как фолбэк)."""
-    found = shutil.which(_CLI_NAME)
-    return found if found else _CLI_NAME
+    """Вернуть полный путь к бинарю CLI (или голое имя как фолбэк).
+
+    Результат кэшируется в модульной переменной для повторных вызовов.
+    """
+    global _CLI_PATH, _CLI_RESOLVED
+    if not _CLI_RESOLVED:
+        found = shutil.which(_CLI_NAME)
+        _CLI_PATH = found if found else _CLI_NAME
+        _CLI_RESOLVED = True
+    return _CLI_PATH  # type: ignore[return-value]
 
 
 def _params_to_flags(params: dict) -> list[str]:
@@ -43,10 +58,14 @@ def _params_to_flags(params: dict) -> list[str]:
     - ``refs`` (список путей) → повторяющийся флаг ``--image <path>`` на каждый;
     - ``start_frame`` → ``--start-image <path>``;
     - ``end_frame`` → ``--end-image <path>``;
+    - ключи со значением None — пропускаются;
     - остальные ключи → ``--<key> <str(value)>``.
     """
     flags: list[str] = []
     for key, value in params.items():
+        if value is None:
+            # Пропускаем любой параметр со значением None
+            continue
         if key == "refs":
             if not value:
                 continue
@@ -66,8 +85,20 @@ def _run(args: list[str]) -> str:
 
     Нулевой код возврата → вернуть stdout.
     Ненулевой → HiggsfieldError с командой и stderr.
+    subprocess.TimeoutExpired → HiggsfieldError с понятным сообщением.
     """
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        raise HiggsfieldError(
+            f"Команда {args!r} не завершилась за 300 секунд (timeout)"
+        )
     if result.returncode != 0:
         raise HiggsfieldError(
             f"Команда {args!r} завершилась с кодом {result.returncode}: {result.stderr}"
@@ -155,7 +186,10 @@ def wait(
     """Ждать терминального статуса задачи.
 
     Опрашивает poll() каждые ``interval_sec`` секунд до ``timeout_sec``.
-    Терминальные статусы: ``completed``, ``failed`` (и любой не ``in_progress``).
+    Продолжает опрос при status in {"in_progress", "queued", ""}.
+    Возвращает result при любом другом непустом статусе (терминальные по
+    контракту: "completed", "failed"; неизвестный непустой — тоже вернуть,
+    решает вызывающий).
 
     Поднимает HiggsfieldError при истечении timeout.
     """
@@ -163,36 +197,58 @@ def wait(
     while True:
         result = poll(job_id)
         status = result.get("status", "")
-        if status != "in_progress":
+        if status not in _POLLING_STATUSES:
             return result
         if time.monotonic() >= deadline:
             raise HiggsfieldError(
                 f"Timeout {timeout_sec}s истёк ожидая завершения задачи {job_id!r}"
             )
-        time.sleep(interval_sec)
+        # Не спать дольше остатка таймаута
+        remaining = max(0.0, deadline - time.monotonic())
+        time.sleep(min(interval_sec, remaining))
 
 
 def download(job_id: str, dest: Path) -> Path:
     """Скачать результат завершённой задачи по HTTP.
 
     Берёт ``result_url`` из poll(); требует status=completed и непустой URL.
-    Создаёт родительские директории, скачивает файл, проверяет наличие на диске.
+    Создаёт родительские директории, качает во временный файл, затем атомарно
+    переименовывает (os.replace). При исключении временный файл удаляется.
+    Проверяет наличие файла на диске после скачивания.
 
-    Поднимает HiggsfieldError если задача не завершена, URL пуст или файл не появился.
+    Поднимает HiggsfieldError если задача не завершена, URL пуст или файл
+    не появился.
     """
     dest = Path(dest)
     status_data = poll(job_id)
     status = status_data.get("status", "")
     result_url = status_data.get("result_url", "")
 
-    if status != "completed" or not result_url:
+    if status == "failed":
         raise HiggsfieldError(
-            f"Задача {job_id!r} не готова к скачиванию: status={status!r}, "
-            f"result_url={result_url!r}"
+            f"Задача {job_id!r} завершилась с ошибкой (failed) — требуется перегенерация"
+        )
+    if status != "completed":
+        raise HiggsfieldError(
+            f"Задача {job_id!r} ещё не готова: status={status!r} (ожидаем completed)"
+        )
+    if not result_url:
+        raise HiggsfieldError(
+            f"Задача {job_id!r} завершена (completed), но result_url пуст"
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _fetch(result_url, str(dest))
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    try:
+        _fetch(result_url, str(tmp))
+        os.replace(tmp, dest)
+    except Exception:
+        # При любой ошибке удаляем частично скачанный tmp-файл
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
     if not dest.exists():
         raise HiggsfieldError(
