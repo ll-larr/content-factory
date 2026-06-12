@@ -71,7 +71,12 @@ def test_max_rejections_custom(tmp_path):
     assert p.max_rejections == 5
 
 
-def test_max_rejections_invalid_raises(tmp_path):
-    for bad in (-1, "2", 1.5, True):
-        with pytest.raises(ProjectError, match="max_rejections"):
-            load_project(write(tmp_path, {**BASE, "max_rejections": bad}))
+@pytest.mark.parametrize("bad", [-1, "2", 1.5, True])
+def test_max_rejections_invalid_raises(tmp_path, bad):
+    with pytest.raises(ProjectError, match="max_rejections"):
+        load_project(write(tmp_path, {**BASE, "max_rejections": bad}))
+
+
+def test_max_rejections_zero_is_valid(tmp_path):
+    p = load_project(write(tmp_path, {**BASE, "max_rejections": 0}))
+    assert p.max_rejections == 0
