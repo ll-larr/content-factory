@@ -59,3 +59,19 @@ def test_missing_models_entirely_raises(tmp_path):
 def test_unknown_strictness_raises(tmp_path):
     with pytest.raises(ProjectError, match="unknown review_strictness"):
         load_project(write(tmp_path, {**BASE, "review_strictness": "paranoid"}))
+
+
+def test_max_rejections_default(tmp_path):
+    p = load_project(write(tmp_path, BASE))
+    assert p.max_rejections == 2
+
+
+def test_max_rejections_custom(tmp_path):
+    p = load_project(write(tmp_path, {**BASE, "max_rejections": 5}))
+    assert p.max_rejections == 5
+
+
+def test_max_rejections_invalid_raises(tmp_path):
+    for bad in (-1, "2", 1.5, True):
+        with pytest.raises(ProjectError, match="max_rejections"):
+            load_project(write(tmp_path, {**BASE, "max_rejections": bad}))

@@ -31,6 +31,7 @@ class Project:
     models: dict[str, str]
     quality_mode: str
     review_strictness: str
+    max_rejections: int
     raw: dict
 
     @property
@@ -67,8 +68,15 @@ def load_project(path: Path) -> Project:
     if strictness not in VALID_STRICTNESS:
         raise ProjectError(f"unknown review_strictness: {strictness!r}")
 
+    max_rejections = data.get("max_rejections", 2)
+    if (isinstance(max_rejections, bool) or not isinstance(max_rejections, int)
+            or max_rejections < 0):
+        raise ProjectError(
+            f"max_rejections must be a non-negative int, got {max_rejections!r}")
+
     return Project(
         name=data["name"], type=ptype, theme=data["theme"],
         language=data.get("language", "en"), models=data["models"],
-        quality_mode=quality, review_strictness=strictness, raw=data,
+        quality_mode=quality, review_strictness=strictness,
+        max_rejections=max_rejections, raw=data,
     )
