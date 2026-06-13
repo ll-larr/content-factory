@@ -5,5 +5,7 @@
   "audience": "6-9",
   "episodes": 1,
   "episode_duration_sec": 10,
-  "models": {"image": "nano_banana_flash", "video": "kling3_0"}
+  "models": {"image": "nano_banana_flash", "video": "kling3_0",
+             "tts": "inworld_text_to_speech", "music": "sonilo_music",
+             "sfx": "mirelo_text_to_audio"}
 }

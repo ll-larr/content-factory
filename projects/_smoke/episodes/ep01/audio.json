@@ -1,0 +1,11 @@
+{
+  "voice_lines": [],
+  "music_cues": [
+    {"id": "mus-01", "prompt": "playful orchestral space adventure, cartoon style, upbeat",
+     "duration": 5, "segment": 1, "offset": 0}
+  ],
+  "sfx": [
+    {"id": "sfx-01", "prompt": "rocket thruster whoosh", "duration": 2,
+     "segment": 1, "offset": 0.0}
+  ]
+}

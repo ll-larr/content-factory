@@ -4,5 +4,6 @@ __pycache__/
 projects/**/*.png
 projects/**/*.mp4
 projects/**/*.mp3
+projects/**/*.m4a
 projects/**/*.wav
 spike/

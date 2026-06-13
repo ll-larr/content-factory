@@ -29,6 +29,28 @@
       "job_id": "ea1a24c3-ef74-4eea-a399-e9b47cc6bee6",
       "reject_reason": null,
       "notes": null
+    },
+    "ep01/audio/mus-01": {
+      "kind": "music",
+      "status": "done",
+      "attempts": 1,
+      "credits_spent": 0.32,
+      "file": "projects\\_smoke\\episodes\\ep01\\audio\\music\\mus-01.m4a",
+      "job_id": "bd452f20-f432-4c25-89b3-ba051b99f019",
+      "reject_reason": null,
+      "notes": null,
+      "reject_count": 0
+    },
+    "ep01/audio/sfx-01": {
+      "kind": "sfx",
+      "status": "done",
+      "attempts": 1,
+      "credits_spent": 0.5,
+      "file": "projects\\_smoke\\episodes\\ep01\\audio\\sfx\\sfx-01.mp3",
+      "job_id": "62dc0106-66eb-4e83-9d46-64dad066fd2e",
+      "reject_reason": null,
+      "notes": null,
+      "reject_count": 0
     }
   }
 }
