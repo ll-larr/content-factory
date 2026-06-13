@@ -133,3 +133,20 @@ def test_probe_failure_after_assembly_returns_zero(proj, monkeypatch, capsys):
     assert run(proj) == 0
     assert (proj / "episodes" / "ep01" / "final" / "ep01.mp4").exists()
     assert "не удалось проверить длительность" in capsys.readouterr().out
+
+
+# ---- Task 5: наложение звука ----
+
+def test_audio_overlay_when_mix_exists(proj, make_tone, capsys):
+    make_tone(proj / "episodes" / "ep01" / "audio" / "mix.m4a", 10.0)
+    assert run(proj) == 0
+    dest = proj / "episodes" / "ep01" / "final" / "ep01.mp4"
+    assert has_audio_stream(dest)
+    assert "со звуком" in capsys.readouterr().out
+
+
+def test_no_audio_when_mix_missing(proj, capsys):
+    assert run(proj) == 0
+    dest = proj / "episodes" / "ep01" / "final" / "ep01.mp4"
+    assert not has_audio_stream(dest)
+    assert "без звука" in capsys.readouterr().out

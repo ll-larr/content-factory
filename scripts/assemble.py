@@ -4,7 +4,9 @@
   python scripts/assemble.py --project projects/pilot --episode ep01
 
 Гейт: все отрезки эпизода приняты ревью (done/accepted_with_notes), иначе
-список + exit 3. Склейка — единая перекодировка libx264 (при разных
+список + exit 3. Если существует audio/mix.m4a (scripts/mix_audio.py) —
+дорожка накладывается; иначе сборка идёт без звука (позволяет собрать
+видео до готовности звука). Склейка — единая перекодировка libx264 (при разных
 разрешениях отрезков ffmpeg упадёт с понятной ошибкой — допустимо для v1).
 Контроль длительности: факт против len(segments)*segment_seconds, допуск ±5%
 (спека §12) — при выходе предупреждение, файл сохраняется, exit 0.
@@ -83,10 +85,16 @@ def main(argv=None) -> int:
         inputs.extend(["-i", str(f)])
     n = len(files)
     filt = "".join(f"[{i}:v]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]"
+    maps = ["-map", "[v]"]
+    mix = episode_dir / "audio" / "mix.m4a"
+    audio_note = "без звука (audio/mix.m4a не найден)"
+    if mix.exists():
+        inputs.extend(["-i", str(mix)])
+        maps.extend(["-map", f"{n}:a", "-c:a", "aac", "-shortest"])
+        audio_note = "со звуком"
     try:
-        run_ffmpeg(inputs + ["-filter_complex", filt, "-map", "[v]",
-                             "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                             str(tmp)])
+        run_ffmpeg(inputs + ["-filter_complex", filt] + maps +
+                   ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(tmp)])
         os.replace(tmp, dest)
     except FfmpegError as e:
         tmp.unlink(missing_ok=True)
@@ -97,13 +105,13 @@ def main(argv=None) -> int:
         fact = probe_duration(dest)
     except FfmpegError as e:
         print(f"ПРЕДУПРЕЖДЕНИЕ: не удалось проверить длительность: {e}")
-        print(f"Собрано: {dest} ({n} отрезков, без звука).")
+        print(f"Собрано: {dest} ({n} отрезков, {audio_note}).")
         return 0
     plan = len(segments) * project.segment_seconds
     if abs(fact - plan) > plan * DURATION_TOLERANCE:
         print(f"ВНИМАНИЕ: длительность {fact:.2f}с вне допуска ±5% "
               f"от плановой {plan}с — проверьте отрезки.")
-    print(f"Собрано: {dest} ({fact:.2f}с, {n} отрезков, без звука).")
+    print(f"Собрано: {dest} ({fact:.2f}с, {n} отрезков, {audio_note}).")
     return 0
 
 
