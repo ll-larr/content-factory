@@ -150,3 +150,32 @@ higgsfield generate wait <job_id> --json --timeout 15m --interval 10s
 8. Флаги параметров — snake_case (`--aspect_ratio`), медиа-флаги — kebab-case
    (`--start-image`). Не путать.
 9. В свежем PowerShell обновлять PATH (см. «Аутентификация»).
+
+## Аудио-модели (фаза 2, спайк 2026-06-13)
+
+Три модели типа `audio` (`model list` → type audio). Контракт `generate create` тот же
+(результат по `result_url`, скачивать HTTP-ом). Карточки — `knowledge/audio/`.
+
+| Модель | params | смета | выход (проверено генерацией) |
+|---|---|---|---|
+| `mirelo_text_to_audio` (SFX) | `--prompt` + `--duration` | 0.25 кр/с (линейно) | **.mp3**, mono, 44.1 кГц ✓ |
+| `sonilo_music` (музыка) | `--prompt` + `--duration` | 0.0625 кр/с (линейно) | **.m4a** (aac), stereo, 44.1 кГц ✓ |
+| `inworld_text_to_speech` (TTS) | `--prompt` + `--voice` | 2 кр плоско (от длины не зависит) | ❌ блокер: формат `voice` (см. ниже) |
+
+**⚠️ Выходной формат РАЗНЫЙ по моделям** (Mirelo .mp3, Sonilo .m4a). Единая константа
+`AUDIO_EXT=".mp3"` в `generate_batch.py` некорректна — расширение надо брать из
+`result_url` (или из поля `output_format` карточки). ffmpeg/ffprobe определяют формат по
+содержимому, поэтому неверное расширение не ломает пайплайн, но мислейблит файлы.
+Длительность Mirelo/Sonilo соблюдается близко к запрошенной; верхнего предела `--duration`
+смета не отбивает (проверено до 60с/600с).
+
+**🚧 Блокер TTS:** `inworld_text_to_speech` со штатными именами голосов Inworld
+(Ashley, Hades, Olivia, Dennis, Mark) → `status: failed`, пустой `result_url`, без текста
+ошибки. **Провал генерации кредиты НЕ списывает** (важно: голоса можно перебирать бесплатно).
+Нужен формат `--voice`, принятый Higgsfield (вероятно UUID/слаг из веб-UI). Детали и
+кандидаты — в карточке `knowledge/audio/inworld_text_to_speech.md`.
+
+**Новая находка про статусы:** терминальный `failed` наблюдали живьём — `get`/`wait`
+возвращают `status: "failed"`, `result_url: ""`, без поля ошибки. Адаптер
+(`higgsfield_client.wait`) уже трактует не-`in_progress` как терминальный и проверяет
+`result_url` — поведение корректно (download поднимет HiggsfieldError на failed).
