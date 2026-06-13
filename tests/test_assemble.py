@@ -142,6 +142,7 @@ def test_audio_overlay_when_mix_exists(proj, make_tone, capsys):
     assert run(proj) == 0
     dest = proj / "episodes" / "ep01" / "final" / "ep01.mp4"
     assert has_audio_stream(dest)
+    assert abs(probe_duration(dest) - 10.0) < 0.5  # -shortest не усёк видео
     assert "со звуком" in capsys.readouterr().out
 
 

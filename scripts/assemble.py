@@ -86,15 +86,19 @@ def main(argv=None) -> int:
     n = len(files)
     filt = "".join(f"[{i}:v]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]"
     maps = ["-map", "[v]"]
+    extra: list[str] = []
     mix = episode_dir / "audio" / "mix.m4a"
     audio_note = "без звука (audio/mix.m4a не найден)"
     if mix.exists():
         inputs.extend(["-i", str(mix)])
-        maps.extend(["-map", f"{n}:a", "-c:a", "aac", "-shortest"])
+        maps.extend(["-map", f"{n}:a", "-c:a", "aac"])
+        # -shortest — подстраховка: длительность mix == видео по построению (mix_audio.py)
+        extra = ["-shortest"]
         audio_note = "со звуком"
     try:
         run_ffmpeg(inputs + ["-filter_complex", filt] + maps +
-                   ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(tmp)])
+                   ["-c:v", "libx264", "-pix_fmt", "yuv420p"] + extra
+                   + [str(tmp)])
         os.replace(tmp, dest)
     except FfmpegError as e:
         tmp.unlink(missing_ok=True)
