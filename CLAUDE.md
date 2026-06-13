@@ -4,7 +4,7 @@
 Спека: docs/superpowers/specs/2026-06-11-content-factory-design.md
 
 ## Структура
-- scripts/factory/ — Python-пакет (project, manifest, models, shots, higgsfield_client)
+- scripts/factory/ — Python-пакет (project, manifest, models, shots, higgsfield_client, audio_plan, ffmpeg_tools)
 - scripts/generate_batch.py — батч-генерация кадров/отрезков
 - scripts/review.py — ревью генераций: accept/reject/requeue (статусы манифеста)
 - scripts/mix_audio.py — сведение аудиодорожки эпизода (тайминг по audio.json)
