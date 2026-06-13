@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -27,11 +29,18 @@ from factory.shots import load_shots
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
-AUDIO_EXT = ".mp3"  # предварительно; уточнить после спайка аудио-моделей (Task 2)
+AUDIO_EXT = ".mp3"  # фолбэк, если result_url без расширения; реальное берётся из URL
 # (список audio.json, ключ models в project.json, kind манифеста, подпапка)
 AUDIO_GROUPS = (("voice_lines", "tts", "voice", "voice"),
                 ("music_cues", "music", "music", "music"),
                 ("sfx", "sfx", "sfx", "sfx"))
+
+AUDIO_KINDS = frozenset(kind for _, _, kind, _ in AUDIO_GROUPS)
+
+
+def _ext_from_url(url: str) -> str:
+    """Расширение файла из result_url (напр. '.m4a'); '' если не определить."""
+    return os.path.splitext(urlsplit(url).path)[1]
 
 
 def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
@@ -239,9 +248,16 @@ def main(argv=None) -> int:
             if result.get("status") != "completed":
                 raise hf.HiggsfieldError(
                     str(result.get("error", "generation failed")))
-            hf.download(job_id, j["dest"])
+            dest = j["dest"]
+            if j["kind"] in AUDIO_KINDS:
+                # Расширение аудио зависит от модели (Mirelo .mp3, Sonilo .m4a) —
+                # берём из result_url, фолбэк AUDIO_EXT (спайк фазы 2 Task 2).
+                ext = _ext_from_url(result.get("result_url", ""))
+                if ext:
+                    dest = dest.with_suffix(ext)
+            hf.download(job_id, dest)
             manifest.set_status(
-                j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
+                j["item_id"], "generated", file=str(dest), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
         except hf.HiggsfieldError as e:

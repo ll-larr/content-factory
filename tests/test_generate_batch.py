@@ -493,3 +493,17 @@ def test_audio_voice_only_plan_without_music_sfx_models(aproj, monkeypatch):
     calls = fake_hf(monkeypatch)
     assert run_audio(aproj) == 0
     assert len(calls["submitted"]) == 1
+
+
+def test_audio_ext_derived_from_result_url(aproj, monkeypatch):
+    """Расширение аудиофайла берётся из result_url (Sonilo отдаёт .m4a),
+    а не из жёсткой AUDIO_EXT; манифест и файл получают верное расширение."""
+    fake_hf(monkeypatch)
+    monkeypatch.setattr(gb.hf, "wait",
+                        lambda j: {"status": "completed",
+                                   "result_url": "https://x/file.m4a"})
+    assert run_audio(aproj) == 0
+    m = Manifest(aproj / "manifest.json")
+    f = m.get("ep01/audio/mus-01")["file"]
+    assert f.endswith(".m4a")
+    assert Path(f).exists()
