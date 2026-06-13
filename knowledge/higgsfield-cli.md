@@ -169,11 +169,16 @@ higgsfield generate wait <job_id> --json --timeout 15m --interval 10s
 Длительность Mirelo/Sonilo соблюдается близко к запрошенной; верхнего предела `--duration`
 смета не отбивает (проверено до 60с/600с).
 
-**🚧 Блокер TTS:** `inworld_text_to_speech` со штатными именами голосов Inworld
-(Ashley, Hades, Olivia, Dennis, Mark) → `status: failed`, пустой `result_url`, без текста
-ошибки. **Провал генерации кредиты НЕ списывает** (важно: голоса можно перебирать бесплатно).
-Нужен формат `--voice`, принятый Higgsfield (вероятно UUID/слаг из веб-UI). Детали и
-кандидаты — в карточке `knowledge/audio/inworld_text_to_speech.md`.
+**🚧 Блокер TTS (окончательно, 2026-06-13):** `inworld_text_to_speech` падает с
+ЛЮБЫМ голосом (Ashley, Hades, Olivia, Dennis, Mark, ava, Ava — все `failed`, пустой
+`result_url`). Механика провала: в `account transactions` каждая попытка — пара
+**`spend -2` → `refund +2` = нетто 0** (провал бесплатен; перебор голосов ничего не стоит).
+**`ava` — голос из рабочей UI-фичи**, но та фича в транзакциях называется **«Voiceover»**
+(≠ CLI «Text to Speech»), не видна в `generate list`, нет job_set_type в `model list`
+и в `marketing-studio`. Т.е. рабочий UI-TTS и CLI-`inworld_text_to_speech` — разные
+подсистемы; CLI-модель для конвейера непригодна. Варианты: ElevenLabs (fallback §3) /
+ручной файл из UI / найти формат voice через сетевой запрос UI. Детали —
+`knowledge/audio/inworld_text_to_speech.md`.
 
 **Новая находка про статусы:** терминальный `failed` наблюдали живьём — `get`/`wait`
 возвращают `status: "failed"`, `result_url: ""`, без поля ошибки. Адаптер
