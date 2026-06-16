@@ -220,6 +220,42 @@ def test_estimate_unknown_provider_raises():
         estimate_media_cost(SCALED_CARD, "openrouter", "720p", 5)
 
 
+# --- Аудит 2026-06-16: добитые ветки ошибок estimate_media_cost ---
+
+def test_estimate_unknown_tier_raises():
+    """Явный несуществующий тир → ModelError (а не молчаливый дефолт)."""
+    with pytest.raises(ModelError, match="unknown tier"):
+        estimate_media_cost(SCALED_CARD, "wavespeed", "720p", 5, tier="ultra")
+
+
+def test_estimate_scaled_missing_res_mult_raises():
+    """scaled без множителя под запрошенное разрешение → ModelError."""
+    card = {"id": "x", "type": "video", "status": "verified",
+            "providers": {"wavespeed": {
+                "pricing": "scaled", "res_mult": {"720p": 1.0},
+                "tiers": {"fast": {"id": "a", "usd_per_sec": 0.1}},
+                "default_tier": "fast"}}}
+    with pytest.raises(ModelError, match="res_mult"):
+        estimate_media_cost(card, "wavespeed", "1080p", 5)
+
+
+def test_estimate_missing_usd_per_sec_raises():
+    """Видео-карточка без usd_per_sec → ModelError (нет базовой цены)."""
+    card = {"id": "x", "type": "video", "status": "verified",
+            "providers": {"wavespeed": {
+                "pricing": "flat", "tiers": {"std": {"id": "a"}}, "default_tier": "std"}}}
+    with pytest.raises(ModelError, match="usd_per_sec"):
+        estimate_media_cost(card, "wavespeed", "720p", 5)
+
+
+def test_estimate_image_missing_price_raises():
+    """image-карточка без usd_per_image → ModelError."""
+    card = {"id": "x", "type": "image", "status": "verified",
+            "providers": {"wavespeed": {"id": "a"}}}
+    with pytest.raises(ModelError, match="usd_per_image"):
+        estimate_media_cost(card, "wavespeed", "720p", 0)
+
+
 # --- validate_video_model под выбранного провайдера ---
 
 PROVIDER_CARD = {

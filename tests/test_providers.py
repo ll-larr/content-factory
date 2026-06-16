@@ -428,3 +428,81 @@ def test_wavespeed_encode_multipart_body():
     assert b"PNGDATA" in body
     boundary = ct.split("boundary=")[1]
     assert body.rstrip().endswith(f"--{boundary}--".encode())
+
+
+# --- Аудит 2026-06-16: добитые ветки base/wait/download/тир + OpenRouter image ---
+
+def test_wait_unknown_nonempty_status_treated_terminal(kdir, monkeypatch):
+    """Неизвестный непустой статус (не в _POLLING) трактуется как терминальный —
+    wait возвращает результат, а не зацикливается до таймаута."""
+    p = make("openrouter", kdir)
+    monkeypatch.setattr(p, "poll", lambda job_id: {"status": "weird_unknown"})
+    monkeypatch.setattr("factory.providers.base.time.sleep", lambda s: None)
+    result = p.wait("J", timeout_sec=10, interval_sec=1)
+    assert result == {"status": "weird_unknown"}
+
+
+def test_download_empty_result_url_raises(kdir, monkeypatch, tmp_path):
+    """Терминальный, но не FAILED статус без result_url → понятная ошибка."""
+    p = make("openrouter", kdir)
+    monkeypatch.setattr(p, "poll",
+                        lambda job_id: {"status": "completed", "unsigned_urls": []})
+    with pytest.raises(ProviderError, match="без результата"):
+        p.download("J", tmp_path / "out.mp4")
+
+
+def test_download_no_file_written_raises_and_cleans(kdir, monkeypatch, tmp_path):
+    """Если сетевой шов ничего не создал — download падает и не оставляет .tmp."""
+    p = make("openrouter", kdir)
+    dest = tmp_path / "out.mp4"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    monkeypatch.setattr(p, "poll", lambda job_id:
+                        {"status": "completed", "unsigned_urls": ["http://cdn/x.mp4"]})
+    monkeypatch.setattr(p, "_download_file", lambda url, d: None)  # шов ничего не пишет
+    with pytest.raises(OSError):
+        p.download("J", dest)
+    assert not tmp.exists() and not dest.exists()
+
+
+OR_IMAGE_CARD = """---
+id: some_image
+type: image
+status: verified
+providers:
+  openrouter:
+    id: "x/img"
+    usd_per_image: 0.01
+---
+# img
+"""
+
+
+def test_openrouter_rejects_image_generation(tmp_path):
+    """OpenRouter — только видео: image-карточка → ProviderError ДО сети."""
+    d = tmp_path / "knowledge" / "images"
+    d.mkdir(parents=True)
+    (d / "some_image.md").write_text(OR_IMAGE_CARD, encoding="utf-8")
+    p = OpenRouterProvider(knowledge_dir=tmp_path / "knowledge")
+    with pytest.raises(ProviderError, match="изображ"):
+        p.submit("some_image", {"prompt": "x"})
+
+
+def test_wavespeed_file_part_rejects_data_uri():
+    """v1_multipart требует локальный файл — data-URI отвергается (как и http)."""
+    with pytest.raises(ProviderError, match="локальн"):
+        WaveSpeedProvider._file_part("data:image/png;base64,AAAA")
+
+
+def test_estimate_1080p_openrouter_x225(kdir):
+    """OpenRouter 1080p scaled = база720p × 2.25."""
+    p = make("openrouter", kdir)
+    assert p.estimate("seedance_2_0", {"resolution": "1080p", "duration": 5}) == \
+        pytest.approx(0.151 * 5 * 2.25)
+
+
+def test_submit_unknown_tier_raises(kdir):
+    """Неизвестный tier валится в _concrete_id ДО сетевого вызова."""
+    p = make("wavespeed", kdir)
+    with pytest.raises(ProviderError, match="tier"):
+        p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "tier": "nonexistent",
+                                  "start_frame": "http://x/a.png"})
