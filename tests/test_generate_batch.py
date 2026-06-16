@@ -124,6 +124,16 @@ def test_storyboard_passes_resolution(proj, monkeypatch):
     assert fp.submitted[0]["resolution"] == "720p"
 
 
+def test_storyboard_passes_image_tier(proj, monkeypatch):
+    """tier из models.image пробрасывается в params раскадровки (находка B)."""
+    fp = fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"]["image"]["tier"] = "hd"
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    run(proj, "storyboard")
+    assert fp.submitted[0].get("tier") == "hd"
+
+
 def test_resume_skips_generated(proj, monkeypatch):
     fake_provider(monkeypatch)
     run(proj, "storyboard")

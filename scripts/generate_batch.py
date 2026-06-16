@@ -45,7 +45,8 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                 "model": project.image_model,
                 "dest": episode_dir / "storyboard" / f"{f['n']:03d}.png",
                 "params": {"prompt": f["prompt"], "refs": resolved_refs,
-                           "aspect_ratio": aspect, "resolution": project.resolution},
+                           "aspect_ratio": aspect, "resolution": project.resolution,
+                           "tier": project.image_tier},
             })
     else:  # segments
         for s in shots["segments"]:

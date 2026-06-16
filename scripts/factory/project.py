@@ -82,6 +82,10 @@ class Project:
     def image_provider(self) -> str:
         return self._entry("image")[1]
 
+    @property
+    def image_tier(self) -> str | None:
+        return self._entry("image")[2]
+
 
 def load_project(path: Path) -> Project:
     data = json.loads(Path(path).read_text(encoding="utf-8"))

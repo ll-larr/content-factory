@@ -123,6 +123,21 @@ def test_image_dict_overrides_provider(tmp_path):
     assert p.image_provider == "wavespeed"
 
 
+def test_image_dict_tier(tmp_path):
+    """Объектная форма models.image несёт tier (симметрично video)."""
+    data = {**BASE, "models": {
+        "image": {"model": "z_image", "provider": "wavespeed", "tier": "hd"},
+        "video": "kling-2.0"}}
+    p = load_project(write(tmp_path, data))
+    assert p.image_tier == "hd"
+
+
+def test_image_string_tier_is_none(tmp_path):
+    """Строковая models.image → tier не задан (None)."""
+    p = load_project(write(tmp_path, BASE))
+    assert p.image_tier is None
+
+
 def test_resolution_default_720(tmp_path):
     assert load_project(write(tmp_path, BASE)).resolution == "720p"
 

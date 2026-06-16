@@ -215,6 +215,26 @@ def test_estimate_image_flat_per_image():
     assert estimate_media_cost(IMAGE_CARD, "wavespeed", "1080p", 99) == pytest.approx(0.005)
 
 
+IMAGE_TIERED_CARD = {
+    "id": "img_tiered", "type": "image", "status": "verified",
+    "providers": {"wavespeed": {
+        "tiers": {"sd": {"id": "a", "usd_per_image": 0.004},
+                  "hd": {"id": "b", "usd_per_image": 0.012}},
+        "default_tier": "sd"}}}
+
+
+def test_estimate_image_tier_selects_price():
+    """Тирная image-карточка: явный тир выбирает свою usd_per_image (находка B)."""
+    assert estimate_media_cost(IMAGE_TIERED_CARD, "wavespeed", "720p", 0,
+                               tier="hd") == pytest.approx(0.012)
+
+
+def test_estimate_image_default_tier_when_none():
+    """Без тира — берётся default_tier image-карточки."""
+    assert estimate_media_cost(IMAGE_TIERED_CARD, "wavespeed", "720p", 0) == \
+        pytest.approx(0.004)
+
+
 def test_estimate_unknown_provider_raises():
     with pytest.raises(ModelError, match="provider"):
         estimate_media_cost(SCALED_CARD, "openrouter", "720p", 5)
