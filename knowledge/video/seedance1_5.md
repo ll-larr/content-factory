@@ -2,13 +2,23 @@
 id: seedance1_5
 type: video
 family: seedance
-status: verified
+status: skeleton          # маппинг провайдеров не проверен живьём — блокирует трату до спайка
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 12
 allowed_durations: [4, 8, 12]
 aspect_ratios: ["auto","16:9","9:16","4:3","3:4","1:1","21:9"]
 cost_tier: low
+providers:
+  wavespeed:              # Seedance 1.5 Pro — самая дешёвая со start/end; id/цена — ДОГАДКА, сверить спайком
+    supports_start_end: true
+    pricing: scaled
+    res_mult: {720p: 1.0, 1080p: 1.4}
+    allowed_durations: [4, 8, 12]
+    tiers:
+      pro: { id: "bytedance/seedance-v1.5-pro/image-to-video", usd_per_sec: 0.05 }
+    default_tier: pro
+  # Runware/OpenRouter — добавить после подтверждения хостинга/id/цены на спайке
 ---
 
 # Seedance 1.5 Pro (seedance1_5)

@@ -1,6 +1,22 @@
+from pathlib import Path
+
 import pytest
 from factory.models import (find_card, load_card, validate_video_model,
                             estimate_media_cost, ModelError)
+
+
+def test_all_real_knowledge_cards_load():
+    """Гард: каждая реальная карточка knowledge/ грузится (валидный frontmatter).
+
+    Запуск из корня репо. Ловит битый YAML после ручных правок карточек
+    (провайдер-маппинги E, модернизация прозы C)."""
+    # Карточки моделей лежат на один уровень ниже (images/ video/ audio/);
+    # верхний уровень — _template.md и *-api.md (контракты, не карточки).
+    cards = [p for p in sorted(Path("knowledge").glob("*/*.md"))
+             if not p.name.startswith("_")]
+    assert cards, "карточек не найдено — тест запускать из корня репо"
+    for p in cards:
+        load_card(p)  # бросит ModelError при битом/незакрытом frontmatter
 
 CARD = """---
 id: kling-2.0
