@@ -8,9 +8,14 @@ native_audio: false
 max_clip_seconds: 0
 aspect_ratios: ["auto","1:1","3:2","2:3","4:3","3:4","4:5","5:4","9:16","16:9","21:9"]
 cost_tier: medium
+providers:                # Nano Banana Pro: премиум-кадры 2K/4K, лица сериала (FINAL §3.1): $0.14
+  wavespeed: { id: "google/nano-banana-pro", pricing: flat, usd_per_image: 0.14 }
 ---
 
 # Nano Banana Pro (nano_banana_2) — персонажи, текст, 4K
+
+> Премиум-кадр (character sheets, читаемый текст) для `film`/`series` (FINAL §4).
+> Бюджетный кадр UGC — Nano Banana 2 ($0.07). model-id WaveSpeed подтвердить спайком.
 
 > **ЛОВУШКА ИМЁН:** В CLI Higgsfield id `nano_banana_2` — это **Nano Banana Pro**, НЕ Nano Banana 2.
 > Настоящая Nano Banana 2 имеет id `nano_banana_flash`.

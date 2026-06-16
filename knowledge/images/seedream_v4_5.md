@@ -8,9 +8,15 @@ native_audio: false
 max_clip_seconds: 0
 aspect_ratios: []
 cost_tier: unknown
+providers:                # рабочая лошадка кадров, консистентность (FINAL §3.1): $0.04
+  wavespeed:  { id: "bytedance/seedream-v4.5", pricing: flat, usd_per_image: 0.04 }
+  openrouter: { id: "bytedance/seedream-4.5",  pricing: flat, usd_per_image: 0.04 }
 ---
 
-# Seedream 4.5 (seedream_v4_5)
+# Seedream 4.5 (seedream_v4_5) — рабочая лошадка кадров, консистентность
+
+> Дефолт-кадр для `film`/`series` (FINAL §4). model-id под WaveSpeed/OpenRouter
+> подтвердить первым боевым запуском.
 
 > Примечание: в исходном плане упоминался seedream-4.0, однако в CLI Higgsfield
 > такой модели нет. Доступна `seedream_v4_5` (Seedream 4.5) — зафиксировано разведкой 2026-06-12.

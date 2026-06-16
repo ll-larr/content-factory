@@ -7,3 +7,5 @@ projects/**/*.mp3
 projects/**/*.m4a
 projects/**/*.wav
 spike/
+.pytest_cache/
+.understand-anything/

@@ -2,15 +2,41 @@
 id: kling3_0
 type: video
 family: kling
-status: verified
+status: skeleton          # модель проверена живьём на Higgsfield, но маппинг WS/RW/OR — нет
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 10
 aspect_ratios: ["16:9","9:16","1:1"]
 cost_tier: medium
+providers:                # flat: цена НЕ зависит от разрешения (FINAL §3.2) — дёшев на 1080p
+  wavespeed:
+    supports_start_end: true
+    pricing: flat
+    tiers:
+      std: { id: "kwaivgi/kling-v3.0-std/start-end-to-video", usd_per_sec: 0.084 }
+      pro: { id: "kwaivgi/kling-v3.0-pro/start-end-to-video", usd_per_sec: 0.168 }
+    default_tier: std
+  openrouter:
+    supports_start_end: true
+    pricing: flat
+    tiers:
+      std: { id: "kwaivgi/kling-3.0", usd_per_sec: 0.084 }
+      pro: { id: "kwaivgi/kling-3.0-pro", usd_per_sec: 0.168 }
+    default_tier: std
+  runware:
+    supports_start_end: true
+    pricing: flat
+    tiers:
+      std: { id: "klingai:kling@3.0-standard", usd_per_sec: 0.084 }
+      pro: { id: "klingai:kling@3.0-pro", usd_per_sec: 0.168 }
+    default_tier: std
 ---
 
-# Kling v3.0 — базовая видеомодель со start/end кадрами
+# Kling v3.0 — реализм/сериал, flat-цена (дёшев на 1080p)
+
+> Дефолт-финал 1080p для `film`/`series` (FINAL §4): flat-цена не растёт с разрешением,
+> поэтому на 1080p дешевле scaled-Seedance. id/path под WaveSpeed/OpenRouter/Runware
+> подтвердить первым боевым запуском.
 
 > **Замена спеки:** В плане фигурировала «Kling 2.0», однако Kling 2.0/2.1/2.5
 > в CLI Higgsfield не существуют. Доступные Kling-модели: `kling2_6` и `kling3_0`.

@@ -80,3 +80,69 @@ def test_max_rejections_invalid_raises(tmp_path, bad):
 def test_max_rejections_zero_is_valid(tmp_path):
     p = load_project(write(tmp_path, {**BASE, "max_rejections": 0}))
     assert p.max_rejections == 0
+
+
+# --- провайдер / тир / разрешение (мультипровайдерный рефактор) ---
+
+FILM = {"name": "f", "type": "film", "theme": "noir", "duration_sec": 60,
+        "models": {"image": "seedream_4_5", "video": "seedance_2_0"}}
+
+
+def test_video_string_uses_type_default_provider(tmp_path):
+    """Строковая модель: провайдер выводится из типа (animated → runware)."""
+    p = load_project(write(tmp_path, BASE))
+    assert p.video_model == "kling-2.0"
+    assert p.video_provider == "runware"      # animated_series → runware
+    assert p.video_tier is None
+
+
+def test_film_type_defaults_to_wavespeed(tmp_path):
+    p = load_project(write(tmp_path, FILM))
+    assert p.video_provider == "wavespeed"
+
+
+def test_video_dict_provider_and_tier(tmp_path):
+    data = {**BASE, "models": {"image": "nb2",
+            "video": {"model": "seedance_2_0", "provider": "wavespeed", "tier": "fast"}}}
+    p = load_project(write(tmp_path, data))
+    assert p.video_model == "seedance_2_0"
+    assert p.video_provider == "wavespeed"
+    assert p.video_tier == "fast"
+
+
+def test_image_provider_defaults_to_type(tmp_path):
+    p = load_project(write(tmp_path, BASE))
+    assert p.image_model == "nano-banana-2"
+    assert p.image_provider == "runware"
+
+
+def test_image_dict_overrides_provider(tmp_path):
+    data = {**BASE, "models": {"image": {"model": "z_image", "provider": "wavespeed"},
+                               "video": "kling-2.0"}}
+    p = load_project(write(tmp_path, data))
+    assert p.image_provider == "wavespeed"
+
+
+def test_resolution_default_720(tmp_path):
+    assert load_project(write(tmp_path, BASE)).resolution == "720p"
+
+
+def test_resolution_explicit_1080(tmp_path):
+    assert load_project(write(tmp_path, {**BASE, "resolution": "1080p"})).resolution == "1080p"
+
+
+def test_resolution_from_models_video(tmp_path):
+    data = {**BASE, "models": {"image": "nb2",
+            "video": {"model": "kling3_0", "provider": "wavespeed", "resolution": "1080p"}}}
+    assert load_project(write(tmp_path, data)).resolution == "1080p"
+
+
+def test_resolution_invalid_raises(tmp_path):
+    with pytest.raises(ProjectError, match="resolution"):
+        load_project(write(tmp_path, {**BASE, "resolution": "480p"}))
+
+
+def test_video_dict_missing_model_raises(tmp_path):
+    data = {**BASE, "models": {"image": "nb2", "video": {"provider": "wavespeed"}}}
+    with pytest.raises(ProjectError, match="model"):
+        load_project(write(tmp_path, data))

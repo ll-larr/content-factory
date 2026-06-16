@@ -1,72 +1,58 @@
-"""Батч-генерация кадров, видеоотрезков или аудио по shots.json/audio.json (спека §8, фаза 2 §5).
+"""Батч-генерация кадров или видеоотрезков по shots.json (спека §8; провайдеры — FINAL §5).
 
 Запускать из корня репозитория:
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage storyboard
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage segments
-  python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage audio
 Флаг --yes пропускает подтверждение сметы (для тестов/автоматизации).
+Кадры идут через image-провайдера проекта, отрезки — через video-провайдера
+(оба задаются в project.json; дефолт — по типу контента, FINAL §4).
 Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
 
-Коды выхода: 0 успех; 1 сбои/отмена/нет audio.json; 2 модель не прошла
-валидацию; 3 segments заблокирован — кадры не приняты ревью.
+Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию;
+3 segments заблокирован — кадры не приняты ревью.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory import higgsfield_client as hf
-from factory.audio_plan import AudioPlanError, load_audio_plan
 from factory.manifest import Manifest, ManifestError
-from factory.models import find_card, validate_audio_model, validate_video_model
+from factory.models import find_card, validate_video_model
 from factory.project import load_project
+from factory.providers import get_provider
+from factory.providers.base import ProviderError
 from factory.shots import load_shots
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
-AUDIO_EXT = ".mp3"  # фолбэк, если result_url без расширения; реальное берётся из URL
-# (список audio.json, ключ models в project.json, kind манифеста, подпапка)
-AUDIO_GROUPS = (("voice_lines", "tts", "voice", "voice"),
-                ("music_cues", "music", "music", "music"),
-                ("sfx", "sfx", "sfx", "sfx"))
-
-AUDIO_KINDS = frozenset(kind for _, _, kind, _ in AUDIO_GROUPS)
-
-
-def _ext_from_url(url: str) -> str:
-    """Расширение файла из result_url (напр. '.m4a'); '' если не определить."""
-    return os.path.splitext(urlsplit(url).path)[1]
-
 
 def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
-               project_dir: Path, audio_plan: dict | None = None) -> list[dict]:
+               project_dir: Path) -> list[dict]:
     ep = shots["episode"]
     aspect = "9:16" if project.type == "shorts" else "16:9"
     jobs = []
     if stage == "storyboard":
         for f in shots["frames"]:
-            # refs в shots.json — относительно папки проекта; CLI резолвит
-            # пути от CWD, поэтому передаём абсолютные/CWD-совместимые пути.
+            # refs в shots.json — относительно папки проекта; передаём
+            # абсолютные/CWD-совместимые пути.
             resolved_refs = [str(project_dir / ref) for ref in f.get("refs", [])]
             jobs.append({
                 "item_id": f"{ep}/storyboard/{f['n']:03d}",
                 "kind": "frame",
-                "model": project.models["image"],
+                "model": project.image_model,
                 "dest": episode_dir / "storyboard" / f"{f['n']:03d}.png",
                 "params": {"prompt": f["prompt"], "refs": resolved_refs,
-                           "aspect_ratio": aspect},
+                           "aspect_ratio": aspect, "resolution": project.resolution},
             })
-    elif stage == "segments":
+    else:  # segments
         for s in shots["segments"]:
             jobs.append({
                 "item_id": f"{ep}/segments/{s['n']:03d}",
                 "kind": "segment",
-                "model": project.models["video"],
+                "model": project.video_model,
                 "dest": episode_dir / "segments" / f"{s['n']:03d}.mp4",
                 "params": {
                     "prompt": s["prompt"],
@@ -76,23 +62,10 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                                      / f"{s['end_frame']:03d}.png"),
                     "duration": project.segment_seconds,
                     "aspect_ratio": aspect,
+                    "resolution": project.resolution,
+                    "tier": project.video_tier,
                 },
             })
-    else:  # audio (фаза 2 §5)
-        assert audio_plan is not None, "stage audio требует audio_plan"
-        for list_name, model_key, kind, subdir in AUDIO_GROUPS:
-            for e in audio_plan[list_name]:
-                params = ({"prompt": e["text"], "voice": e["voice"]}
-                          if kind == "voice"
-                          else {"prompt": e["prompt"], "duration": e["duration"]})
-                jobs.append({
-                    "item_id": f"{ep}/audio/{e['id']}",
-                    "kind": kind,
-                    "model": project.models[model_key],
-                    "dest": episode_dir / "audio" / subdir
-                            / f"{e['id']}{AUDIO_EXT}",
-                    "params": params,
-                })
     return jobs
 
 
@@ -100,7 +73,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", required=True)
     ap.add_argument("--episode", required=True)
-    ap.add_argument("--stage", required=True, choices=["storyboard", "segments", "audio"])
+    ap.add_argument("--stage", required=True, choices=["storyboard", "segments"])
     ap.add_argument("--yes", action="store_true",
                     help="не спрашивать подтверждение сметы")
     args = ap.parse_args(argv)
@@ -111,10 +84,11 @@ def main(argv=None) -> int:
     shots = load_shots(episode_dir / "shots.json", project_dir)
     manifest = Manifest(project_dir / "manifest.json")
 
-    # Спека §6: валидация модели ДО траты кредитов
     if args.stage == "segments":
-        card = find_card(KNOWLEDGE_DIR, project.models["video"])
-        problems = validate_video_model(card, project.segment_seconds)
+        provider_name = project.video_provider
+        # Спека §6: валидация модели ПОД ВЫБРАННОГО провайдера ДО трат
+        card = find_card(KNOWLEDGE_DIR, project.video_model)
+        problems = validate_video_model(card, project.segment_seconds, provider_name)
         if problems:
             print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
             for p in problems:
@@ -142,40 +116,15 @@ def main(argv=None) -> int:
             for frame_id in sorted(frame_problems):
                 print(f"  - {frame_id}: {frame_problems[frame_id]}")
             return 3
+    else:
+        provider_name = project.image_provider
 
-    audio_plan = None
-    if args.stage == "audio":
-        plan_path = episode_dir / "audio.json"
-        if not plan_path.exists():
-            print(f"Файл плана звука не найден: {plan_path}")
-            return 1
-        audio_plan = load_audio_plan(plan_path, shots)
-        audio_problems = []
-        for list_name, model_key, _kind, _subdir in AUDIO_GROUPS:
-            if not audio_plan[list_name]:
-                continue
-            model_id = project.models.get(model_key)
-            if not model_id:
-                audio_problems.append(f"models.{model_key} не задан в project.json "
-                                      f"(нужен для {list_name})")
-                continue
-            card = find_card(KNOWLEDGE_DIR, model_id)
-            audio_problems.extend(validate_audio_model(card))
-        if audio_problems:
-            print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
-            for p in audio_problems:
-                print(f"  - {p}")
-            return 2
-
-    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir,
-                      audio_plan)
+    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:
         manifest.add(j["item_id"], kind=j["kind"])
     manifest.save()
 
-    # Восстановление после прерванного прогона: элементы, оставшиеся в статусе
-    # generating (например, после KeyboardInterrupt), возвращаются в pending,
-    # чтобы следующий прогон их не потерял.
+    # Восстановление после прерванного прогона: generating → pending.
     recovered = False
     for j in jobs:
         if manifest.get(j["item_id"])["status"] == "generating":
@@ -184,16 +133,14 @@ def main(argv=None) -> int:
     if recovered:
         manifest.save()
 
-    # Цикл ревью (спека ревью §4.2): отклонённые уходят на перегенерацию по
-    # актуальному shots.json, пока не исчерпан лимит max_rejections; дальше —
-    # решение человека (review.py requeue).
+    # Цикл ревью (спека ревью §4.2): отклонённые — на перегенерацию, пока не
+    # исчерпан лимит max_rejections; дальше — решение человека (review.py requeue).
     blocked = []
     requeued = False
     for j in jobs:
         item = manifest.get(j["item_id"])
         if item["status"] != "rejected":
             continue
-        # При max_rejections=0 автоперегенерация запрещена: любой reject → blocked
         if item.get("reject_count", 0) < project.max_rejections:
             manifest.set_status(j["item_id"], "pending")
             requeued = True
@@ -223,13 +170,15 @@ def main(argv=None) -> int:
             print("Всё уже сгенерировано — нечего делать.")
         return 0
 
-    # Спека §8 шаг 2: смета перед запуском
-    estimates = {j["item_id"]: hf.estimate(j["model"], j["params"])
+    provider = get_provider(provider_name, KNOWLEDGE_DIR)
+
+    # Спека §8 шаг 2: смета перед запуском (бесплатно, до трат)
+    estimates = {j["item_id"]: provider.estimate(j["model"], j["params"])
                  for j in todo}
     total = sum(estimates.values())
     models_used = ", ".join(sorted({j["model"] for j in todo}))
-    print(f"СМЕТА: {len(todo)} генераций, ~{total:.0f} кредитов "
-          f"({args.stage}, модели: {models_used}).")
+    print(f"СМЕТА: {len(todo)} генераций, ~{total:.4f} {provider.unit} "
+          f"({args.stage}, провайдер {provider_name}, модели: {models_used}).")
     if not args.yes:
         if input("Запустить? [y/N] ").strip().lower() != "y":
             print("Отменено.")
@@ -243,26 +192,16 @@ def main(argv=None) -> int:
         manifest.save()
         job_id = None
         try:
-            job_id = hf.submit(j["model"], j["params"])
-            result = hf.wait(job_id)
-            if result.get("status") != "completed":
-                raise hf.HiggsfieldError(
-                    str(result.get("error", "generation failed")))
-            dest = j["dest"]
-            if j["kind"] in AUDIO_KINDS:
-                # Расширение аудио зависит от модели (Mirelo .mp3, Sonilo .m4a) —
-                # берём из result_url, фолбэк AUDIO_EXT (спайк фазы 2 Task 2).
-                ext = _ext_from_url(result.get("result_url", ""))
-                if ext:
-                    dest = dest.with_suffix(ext)
-            hf.download(job_id, dest)
+            job_id = provider.submit(j["model"], j["params"])
+            provider.wait(job_id)
+            provider.download(job_id, j["dest"])
             manifest.set_status(
-                j["item_id"], "generated", file=str(dest), job_id=job_id,
+                j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
-        except hf.HiggsfieldError as e:
+        except ProviderError as e:
             # технический сбой -> вернуть в очередь (спека §13);
-            # если job_id известен — сохраняем для соотнесения с логами Higgsfield
+            # если job_id известен — сохраняем для соотнесения с логами провайдера
             extra = {"job_id": job_id} if job_id is not None else {}
             manifest.set_status(j["item_id"], "pending", **extra)
             print(f"  ! {j['item_id']}: {e}")
@@ -270,7 +209,7 @@ def main(argv=None) -> int:
         manifest.save()
 
     print(f"ИТОГ: сгенерировано {ok} (ждут ревью), сбоев {fail}; "
-          f"всего по проекту потрачено {manifest.credits_total():.0f} кредитов.")
+          f"всего по проекту потрачено {manifest.credits_total():.4f} {provider.unit}.")
     return 0 if fail == 0 else 1
 
 
