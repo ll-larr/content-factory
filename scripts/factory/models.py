@@ -150,7 +150,13 @@ def estimate_media_cost(card: dict, provider: str, resolution: str,
 
 
 def validate_audio_model(card: dict) -> list[str]:
-    """Валидация аудио-модели ДО траты кредитов (спека фазы 2 §5)."""
+    """Валидация аудио-модели ДО траты кредитов (спека фазы 2 §5).
+
+    Сохранена под будущую интеграцию TTS/music (ElevenLabs): стадия audio в
+    generate_batch отключена при выресе Higgsfield, поэтому оркестратором сейчас
+    НЕ вызывается (покрыта только юнит-тестами). Не удалять — точка входа для
+    отдельной audio-задачи (CLAUDE.md).
+    """
     problems: list[str] = []
     if card["type"] != "audio":
         problems.append(f"{card['id']}: not an audio model")
