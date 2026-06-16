@@ -98,6 +98,33 @@ def validate_video_model(card: dict, segment_seconds: int,
     return problems
 
 
+def validate_image_model(card: dict, provider: str | None = None) -> list[str]:
+    """Гейт трат для раскадровки (image), симметрично ``validate_video_model``.
+
+    Картинкам не нужны start/end-сцепка и сетка длительностей — проверяем тип,
+    доступность под выбранного провайдера (если задан И в карте есть ``providers``)
+    и статус ``skeleton`` (маппинг провайдера не подтверждён живьём → не тратить).
+    """
+    problems: list[str] = []
+    if card["type"] != "image":
+        problems.append(f"{card['id']}: not an image model")
+        return problems
+
+    providers = card.get("providers")
+    if provider is not None and providers is not None:
+        if providers.get(provider) is None:
+            problems.append(
+                f"{card['id']}: not available on provider {provider!r} "
+                f"(declared: {sorted(providers)})")
+            return problems
+
+    if card.get("status") == "skeleton":
+        problems.append(
+            f"{card['id']}: card is a skeleton — capabilities not verified, "
+            "verify before spending credits")
+    return problems
+
+
 def estimate_media_cost(card: dict, provider: str, resolution: str,
                         duration_sec: float, tier: str | None = None) -> float:
     """Смета в долларах под провайдера/разрешение/тип цены (ТЗ §6, FINAL §3).

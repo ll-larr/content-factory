@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from factory.manifest import Manifest, ManifestError
-from factory.models import find_card, validate_video_model
+from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
 from factory.providers import get_provider
 from factory.providers.base import ProviderError
@@ -118,6 +118,15 @@ def main(argv=None) -> int:
             return 3
     else:
         provider_name = project.image_provider
+        # Гейт трат раскадровки (симметрично video): валидация image-модели под
+        # выбранного провайдера ДО сметы — skeleton/не-тот-провайдер → код 2.
+        card = find_card(KNOWLEDGE_DIR, project.image_model)
+        problems = validate_image_model(card, provider_name)
+        if problems:
+            print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
+            for p in problems:
+                print(f"  - {p}")
+            return 2
 
     jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:

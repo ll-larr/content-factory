@@ -23,6 +23,22 @@ VIDEO_CARD = (
     "    default_tier: fast\n"
     "---\n# Seedance 2.0\n")
 
+IMAGE_CARD = (
+    "---\nid: z_image\ntype: image\nstatus: verified\n"
+    "providers:\n"
+    "  wavespeed:\n"
+    "    id: \"wsp/z-image\"\n"
+    "    pricing: flat\n"
+    "    usd_per_image: 0.005\n"
+    "---\n# Z Image\n")
+
+
+def write_image_card(tmp_path):
+    """Карточка image-модели z_image (verified, wavespeed) для гейта раскадровки."""
+    idir = tmp_path / "knowledge" / "images"
+    idir.mkdir(parents=True, exist_ok=True)
+    (idir / "z_image.md").write_text(IMAGE_CARD, encoding="utf-8")
+
 
 @pytest.fixture
 def proj(tmp_path, monkeypatch):
@@ -52,6 +68,7 @@ def proj(tmp_path, monkeypatch):
     kdir = tmp_path / "knowledge" / "video"
     kdir.mkdir(parents=True)
     (kdir / "seedance_2_0.md").write_text(VIDEO_CARD, encoding="utf-8")
+    write_image_card(tmp_path)
     monkeypatch.chdir(tmp_path)
     return pdir
 
@@ -172,6 +189,27 @@ def test_skeleton_card_blocks_segments(proj, monkeypatch):
     assert run(proj, "segments") == 2  # валидация остановила ДО трат
 
 
+def test_skeleton_image_card_blocks_storyboard(proj, monkeypatch):
+    """skeleton image-карточка блокирует раскадровку ДО трат (гейт, симметрично видео)."""
+    fp = fake_provider(monkeypatch)
+    card = Path("knowledge/images/z_image.md")
+    card.write_text(card.read_text(encoding="utf-8")
+                    .replace("status: verified", "status: skeleton"),
+                    encoding="utf-8")
+    assert run(proj, "storyboard") == 2
+    assert fp.estimates == []  # валидация остановила ДО сметы
+
+
+def test_image_model_not_on_provider_blocks_storyboard(proj, monkeypatch, capsys):
+    """Image-модель не сконфигурирована под выбранного провайдера — блок раскадровки."""
+    fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"]["image"]["provider"] = "runware"  # в карте только wavespeed
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    assert run(proj, "storyboard") == 2
+    assert "runware" in capsys.readouterr().out
+
+
 def test_model_not_on_provider_blocks_segments(proj, monkeypatch, capsys):
     """Если видео-модель не сконфигурирована под выбранного провайдера — блок."""
     fake_provider(monkeypatch)
@@ -260,6 +298,7 @@ def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
                    {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]}],
         "segments": [],
     }), encoding="utf-8")
+    write_image_card(tmp_path)
     monkeypatch.chdir(tmp_path)
     fp = fake_provider(monkeypatch)
     result = gb.main(["--project", str(pdir), "--episode", "ep01",

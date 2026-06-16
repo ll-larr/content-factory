@@ -299,3 +299,38 @@ def test_validate_legacy_toplevel_when_no_providers_map():
     legacy = {"id": "kling-2.0", "type": "video", "status": "verified",
               "supports_start_end_frame": True, "max_clip_seconds": 10}
     assert validate_video_model(legacy, segment_seconds=5, provider="wavespeed") == []
+
+
+# --- validate_image_model: гейт трат для раскадровки (симметрично видео) ---
+
+IMAGE_PROVIDER_CARD = {
+    "id": "z_image", "type": "image", "status": "verified",
+    "providers": {"wavespeed": {"id": "wsp/z", "usd_per_image": 0.005}},
+}
+
+
+def test_validate_image_ok():
+    """Verified image-карточка под её провайдером — без проблем."""
+    from factory.models import validate_image_model
+    assert validate_image_model(IMAGE_PROVIDER_CARD, provider="wavespeed") == []
+
+
+def test_validate_image_wrong_type():
+    """Не-image карточка → проблема."""
+    from factory.models import validate_image_model
+    card = {"id": "x", "type": "video", "status": "verified"}
+    assert any("not an image model" in p for p in validate_image_model(card))
+
+
+def test_validate_image_not_on_provider():
+    """Модель не заявлена под выбранного провайдера → проблема."""
+    from factory.models import validate_image_model
+    problems = validate_image_model(IMAGE_PROVIDER_CARD, provider="runware")
+    assert any("runware" in p for p in problems)
+
+
+def test_validate_image_skeleton_flagged():
+    """skeleton image-карточка → проблема (гейт трат до живого спайка)."""
+    from factory.models import validate_image_model
+    card = {**IMAGE_PROVIDER_CARD, "status": "skeleton"}
+    assert any("skeleton" in p for p in validate_image_model(card, provider="wavespeed"))
