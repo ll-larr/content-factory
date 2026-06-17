@@ -10,7 +10,7 @@ providers:
     supports_start_end: true
     pricing: scaled
     res_mult: {720p: 1.0, 1080p: 2.25}
-    id: "vidu:q2-turbo"   # AIR-id подтвердить спайком
+    id: "vidu:3@2"        # Vidu Q2 Turbo — реальный AIR (modelSearch 2026-06-17)
     usd_per_sec: 0.021
   wavespeed:              # WaveSpeed v3 JSON: start-end-to-video-q2-turbo (поля start_frame/end_frame)
     supports_start_end: true

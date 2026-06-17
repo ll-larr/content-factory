@@ -64,3 +64,17 @@
   при необходимости адаптер должен слать width/height вместо/вместе с resolution.
 - AIR-id Kling 3.0 уточнить (видели `klingai:2@2`, `klingai:kling@o1-standard`; в карточке —
   догадка `klingai:kling@3.0-standard/...`). Точные AIR — со страниц `runware.ai/docs/models/*`.
+
+## Спайк 2026-06-17 (ключ задан) — РЕАЛЬНЫЕ AIR через modelSearch + статус
+Свободный `taskType: modelSearch` (без генерации) вернул настоящие AIR — карточки поправлены:
+- **FLUX.2 [klein] 9B** = `runware:400@2` (есть варианты 4B `…@4`, base `…@3/@5`, KV `…@6`,
+  dev `runware:400@1`); flux_2_klein.runware поправлен.
+- **Vidu Q2 Turbo** = `vidu:3@2` (Q3 `vidu:4@1`, Q3 Turbo `vidu:4@2`, Q2 Pro `vidu:3@1`);
+  vidu_q2_turbo.runware поправлен.
+- **Seedance**: `bytedance:seedance@2.0` (seedance_2_0 уже верно), `bytedance:seedance@2.0-fast`,
+  **`bytedance:seedance@1.5-pro`** (реальный AIR для seedance1_5.runware).
+- **⚠️ Баланс:** живой `imageInference` (FLUX.2 klein) отклонён с `insufficientCredits` —
+  AIR/контракт приняты (id больше не «architectureId error»), но **аккаунт Runware без баланса**.
+  Для генерации — пополнить кошелёк (my.runware.ai/wallet). До успешной генерации карточки
+  Runware остаются `skeleton`; вопрос `resolution` vs `width/height` для image не дошёл до
+  проверки (баланс отбил раньше) — сверить после пополнения.
