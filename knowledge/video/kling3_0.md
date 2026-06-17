@@ -13,8 +13,8 @@ providers:                # flat: цена НЕ зависит от разреш
     supports_start_end: true
     pricing: flat
     tiers:
-      std: { id: "kwaivgi/kling-v3.0-std/start-end-to-video", usd_per_sec: 0.084 }
-      pro: { id: "kwaivgi/kling-v3.0-pro/start-end-to-video", usd_per_sec: 0.168 }
+      std: { id: "kwaivgi/kling-v3.0-std/image-to-video", usd_per_sec: 0.084 }  # реальный path (/api/v3/models); end_image — сверить
+      pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.168 }
     default_tier: std
   openrouter:             # models-list 2026-06-17: РЕАЛЬНЫЕ id; ⚠️ 720p-only; цена без аудио
     supports_start_end: true

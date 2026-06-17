@@ -14,7 +14,7 @@ providers:
     pricing: scaled
     res_mult: {720p: 1.0, 1080p: 1.4}
     tiers:
-      fast: { id: "bytedance/seedance-v2-fast/image-to-video", usd_per_sec: 0.10 }
+      fast: { id: "bytedance/seedance-2.0-fast/image-to-video", usd_per_sec: 0.10 }  # реальный path (/api/v3/models 2026-06-17)
     default_tier: fast
   runware:                # $0.13/$0.29 (×2.25)
     supports_start_end: true
@@ -23,7 +23,7 @@ providers:
     tiers:
       fast: { id: "bytedance:seedance@2.0", usd_per_sec: 0.13 }
     default_tier: fast
-  openrouter:             # подтверждённый id (GET /videos/models); ⚠️ только 480p/720p, 1080p НЕТ
+  openrouter:             # id ✓; ⚠️ только 480p/720p; ⚠️ цена ТОКЕННАЯ (video_tokens), usd_per_sec НЕВЕРНА — сверить
     supports_start_end: true
     pricing: scaled
     res_mult: {720p: 1.0, 1080p: 2.25}

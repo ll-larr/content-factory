@@ -9,7 +9,7 @@ max_clip_seconds: 0
 aspect_ratios: ["1:1","3:2","2:3","4:3","3:4","4:5","5:4","9:16","16:9","21:9"]
 cost_tier: low
 providers:                # Nano Banana 2 — бюджетный UGC-кадр (FINAL §3.1 ~$0.07); id/цена — ДОГАДКА, сверить спайком
-  wavespeed: { id: "google/nano-banana", pricing: flat, usd_per_image: 0.07 }
+  wavespeed: { id: "google/nano-banana-2/text-to-image", pricing: flat, usd_per_image: 0.07 }  # реальный path (/api/v3/models 2026-06-17)
 ---
 
 # Nano Banana 2 (nano_banana_flash) — рабочая лошадка раскадровки

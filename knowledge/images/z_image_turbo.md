@@ -2,10 +2,10 @@
 id: z_image_turbo
 type: image
 family: flux
-status: skeleton          # маппинг провайдера не проверен живьём
+status: verified          # WaveSpeed подтверждён живьём 2026-06-17 (z-image/turbo, $0.005, файл получен)
 providers:
   wavespeed:              # максимально дёшево (FINAL §3.1): $0.005/изобр.
-    id: "z-image/turbo"   # model-path подтвердить спайком
+    id: "wavespeed-ai/z-image/turbo"   # реальный path из /api/v3/models (спайк 2026-06-17)
     pricing: flat
     usd_per_image: 0.005
 ---
