@@ -1,5 +1,22 @@
+from pathlib import Path
+
 import pytest
-from factory.models import find_card, load_card, validate_video_model, ModelError
+from factory.models import (find_card, load_card, validate_video_model,
+                            estimate_media_cost, ModelError)
+
+
+def test_all_real_knowledge_cards_load():
+    """Гард: каждая реальная карточка knowledge/ грузится (валидный frontmatter).
+
+    Запуск из корня репо. Ловит битый YAML после ручных правок карточек
+    (провайдер-маппинги E, модернизация прозы C)."""
+    # Карточки моделей лежат на один уровень ниже (images/ video/ audio/);
+    # верхний уровень — _template.md и *-api.md (контракты, не карточки).
+    cards = [p for p in sorted(Path("knowledge").glob("*/*.md"))
+             if not p.name.startswith("_")]
+    assert cards, "карточек не найдено — тест запускать из корня репо"
+    for p in cards:
+        load_card(p)  # бросит ModelError при битом/незакрытом frontmatter
 
 CARD = """---
 id: kling-2.0
@@ -149,3 +166,207 @@ def test_validate_audio_model_skeleton():
     from factory.models import validate_audio_model
     card = {"id": "sonilo_music", "type": "audio", "status": "skeleton"}
     assert any("skeleton" in p for p in validate_audio_model(card))
+
+
+# --- estimate_media_cost (смета под провайдера/разрешение/тип цены) ---
+
+SCALED_CARD = {
+    "id": "seedance_2_0", "type": "video", "status": "verified",
+    "providers": {
+        "wavespeed": {"pricing": "scaled", "res_mult": {"720p": 1.0, "1080p": 1.4},
+                      "tiers": {"fast": {"id": "wsp/seedance-fast", "usd_per_sec": 0.10}},
+                      "default_tier": "fast"},
+        "runware": {"pricing": "scaled", "res_mult": {"720p": 1.0, "1080p": 2.25},
+                    "tiers": {"fast": {"id": "rw/seedance@2.0", "usd_per_sec": 0.13}},
+                    "default_tier": "fast"},
+    },
+}
+
+FLAT_CARD = {
+    "id": "kling3_0", "type": "video", "status": "verified",
+    "providers": {
+        "wavespeed": {"pricing": "flat",
+                      "tiers": {"std": {"id": "wsp/kling3-std", "usd_per_sec": 0.084},
+                                "pro": {"id": "wsp/kling3-pro", "usd_per_sec": 0.168}},
+                      "default_tier": "std"},
+    },
+}
+
+IMAGE_CARD = {
+    "id": "z_image_turbo", "type": "image", "status": "verified",
+    "providers": {"wavespeed": {"id": "wsp/z-image", "pricing": "flat",
+                                "usd_per_image": 0.005}},
+}
+
+
+def test_estimate_scaled_720p_base():
+    """720p scaled = usd_per_sec × duration (res_mult 1.0)."""
+    assert estimate_media_cost(SCALED_CARD, "wavespeed", "720p", 5) == pytest.approx(0.50)
+
+
+def test_estimate_scaled_1080p_wavespeed_x14():
+    """1080p WaveSpeed = база720p × 1.4."""
+    assert estimate_media_cost(SCALED_CARD, "wavespeed", "1080p", 5) == pytest.approx(0.70)
+
+
+def test_estimate_scaled_1080p_runware_x225():
+    """1080p Runware = база720p × 2.25."""
+    assert estimate_media_cost(SCALED_CARD, "runware", "1080p", 5) == pytest.approx(0.13 * 5 * 2.25)
+
+
+def test_estimate_flat_resolution_independent():
+    """flat: цена не зависит от разрешения."""
+    at_720 = estimate_media_cost(FLAT_CARD, "wavespeed", "720p", 5)
+    at_1080 = estimate_media_cost(FLAT_CARD, "wavespeed", "1080p", 5)
+    assert at_720 == at_1080 == pytest.approx(0.42)
+
+
+def test_estimate_flat_tier_selects_price():
+    """Явный тир выбирает свою цену (pro дороже std)."""
+    assert estimate_media_cost(FLAT_CARD, "wavespeed", "720p", 5, tier="pro") == pytest.approx(0.84)
+
+
+def test_estimate_image_flat_per_image():
+    """image: usd_per_image, не зависит от длительности/разрешения."""
+    assert estimate_media_cost(IMAGE_CARD, "wavespeed", "1080p", 99) == pytest.approx(0.005)
+
+
+IMAGE_TIERED_CARD = {
+    "id": "img_tiered", "type": "image", "status": "verified",
+    "providers": {"wavespeed": {
+        "tiers": {"sd": {"id": "a", "usd_per_image": 0.004},
+                  "hd": {"id": "b", "usd_per_image": 0.012}},
+        "default_tier": "sd"}}}
+
+
+def test_estimate_image_tier_selects_price():
+    """Тирная image-карточка: явный тир выбирает свою usd_per_image (находка B)."""
+    assert estimate_media_cost(IMAGE_TIERED_CARD, "wavespeed", "720p", 0,
+                               tier="hd") == pytest.approx(0.012)
+
+
+def test_estimate_image_default_tier_when_none():
+    """Без тира — берётся default_tier image-карточки."""
+    assert estimate_media_cost(IMAGE_TIERED_CARD, "wavespeed", "720p", 0) == \
+        pytest.approx(0.004)
+
+
+def test_estimate_unknown_provider_raises():
+    with pytest.raises(ModelError, match="provider"):
+        estimate_media_cost(SCALED_CARD, "openrouter", "720p", 5)
+
+
+# --- Аудит 2026-06-16: добитые ветки ошибок estimate_media_cost ---
+
+def test_estimate_unknown_tier_raises():
+    """Явный несуществующий тир → ModelError (а не молчаливый дефолт)."""
+    with pytest.raises(ModelError, match="unknown tier"):
+        estimate_media_cost(SCALED_CARD, "wavespeed", "720p", 5, tier="ultra")
+
+
+def test_estimate_scaled_missing_res_mult_raises():
+    """scaled без множителя под запрошенное разрешение → ModelError."""
+    card = {"id": "x", "type": "video", "status": "verified",
+            "providers": {"wavespeed": {
+                "pricing": "scaled", "res_mult": {"720p": 1.0},
+                "tiers": {"fast": {"id": "a", "usd_per_sec": 0.1}},
+                "default_tier": "fast"}}}
+    with pytest.raises(ModelError, match="res_mult"):
+        estimate_media_cost(card, "wavespeed", "1080p", 5)
+
+
+def test_estimate_missing_usd_per_sec_raises():
+    """Видео-карточка без usd_per_sec → ModelError (нет базовой цены)."""
+    card = {"id": "x", "type": "video", "status": "verified",
+            "providers": {"wavespeed": {
+                "pricing": "flat", "tiers": {"std": {"id": "a"}}, "default_tier": "std"}}}
+    with pytest.raises(ModelError, match="usd_per_sec"):
+        estimate_media_cost(card, "wavespeed", "720p", 5)
+
+
+def test_estimate_image_missing_price_raises():
+    """image-карточка без usd_per_image → ModelError."""
+    card = {"id": "x", "type": "image", "status": "verified",
+            "providers": {"wavespeed": {"id": "a"}}}
+    with pytest.raises(ModelError, match="usd_per_image"):
+        estimate_media_cost(card, "wavespeed", "720p", 0)
+
+
+# --- validate_video_model под выбранного провайдера ---
+
+PROVIDER_CARD = {
+    "id": "vidu_q2_turbo", "type": "video", "status": "verified",
+    "providers": {
+        "runware": {"supports_start_end": True, "pricing": "scaled",
+                    "allowed_durations": [4, 8], "res_mult": {"720p": 1.0, "1080p": 2.25},
+                    "id": "rw/vidu-q2t", "usd_per_sec": 0.021},
+        "wavespeed": {"supports_start_end": False, "pricing": "scaled",
+                      "res_mult": {"720p": 1.0, "1080p": 1.4},
+                      "id": "wsp/vidu-q2t", "usd_per_sec": 0.03},
+    },
+}
+
+
+def test_validate_provider_ok():
+    """Провайдер поддерживает start/end и длительность в сетке — без проблем."""
+    assert validate_video_model(PROVIDER_CARD, segment_seconds=8, provider="runware") == []
+
+
+def test_validate_provider_no_start_end_flagged():
+    """У wavespeed нет start/end — проблема под этим провайдером."""
+    problems = validate_video_model(PROVIDER_CARD, segment_seconds=5, provider="wavespeed")
+    assert any("start/end" in p for p in problems)
+
+
+def test_validate_provider_duration_not_in_grid():
+    """5с не входит в сетку [4,8] провайдера runware."""
+    problems = validate_video_model(PROVIDER_CARD, segment_seconds=5, provider="runware")
+    assert any("allowed grid" in p for p in problems)
+
+
+def test_validate_provider_missing_in_card():
+    """Модель не заявлена для openrouter — проблема (нет в карте провайдеров)."""
+    problems = validate_video_model(PROVIDER_CARD, segment_seconds=8, provider="openrouter")
+    assert any("openrouter" in p for p in problems)
+
+
+def test_validate_legacy_toplevel_when_no_providers_map():
+    """Карта без providers + provider задан → фолбэк на top-level поля (legacy)."""
+    legacy = {"id": "kling-2.0", "type": "video", "status": "verified",
+              "supports_start_end_frame": True, "max_clip_seconds": 10}
+    assert validate_video_model(legacy, segment_seconds=5, provider="wavespeed") == []
+
+
+# --- validate_image_model: гейт трат для раскадровки (симметрично видео) ---
+
+IMAGE_PROVIDER_CARD = {
+    "id": "z_image", "type": "image", "status": "verified",
+    "providers": {"wavespeed": {"id": "wsp/z", "usd_per_image": 0.005}},
+}
+
+
+def test_validate_image_ok():
+    """Verified image-карточка под её провайдером — без проблем."""
+    from factory.models import validate_image_model
+    assert validate_image_model(IMAGE_PROVIDER_CARD, provider="wavespeed") == []
+
+
+def test_validate_image_wrong_type():
+    """Не-image карточка → проблема."""
+    from factory.models import validate_image_model
+    card = {"id": "x", "type": "video", "status": "verified"}
+    assert any("not an image model" in p for p in validate_image_model(card))
+
+
+def test_validate_image_not_on_provider():
+    """Модель не заявлена под выбранного провайдера → проблема."""
+    from factory.models import validate_image_model
+    problems = validate_image_model(IMAGE_PROVIDER_CARD, provider="runware")
+    assert any("runware" in p for p in problems)
+
+
+def test_validate_image_skeleton_flagged():
+    """skeleton image-карточка → проблема (гейт трат до живого спайка)."""
+    from factory.models import validate_image_model
+    card = {**IMAGE_PROVIDER_CARD, "status": "skeleton"}
+    assert any("skeleton" in p for p in validate_image_model(card, provider="wavespeed"))

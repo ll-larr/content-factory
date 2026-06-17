@@ -22,6 +22,18 @@ class ShotsError(ValueError):
     pass
 
 
+# Единая конвенция путей файлов эпизода (раньше дублировалась в generate_batch.py,
+# mix_audio.py и assemble.py — теперь источник один). Меняешь схему — только тут.
+def segment_path(episode_dir: Path, n: int) -> Path:
+    """Путь к файлу видеоотрезка №n (`episodes/<ep>/segments/NNN.mp4`)."""
+    return Path(episode_dir) / "segments" / f"{n:03d}.mp4"
+
+
+def frame_path(episode_dir: Path, n: int) -> Path:
+    """Путь к файлу кадра раскадровки №n (`episodes/<ep>/storyboard/NNN.png`)."""
+    return Path(episode_dir) / "storyboard" / f"{n:03d}.png"
+
+
 def load_shots(path: Path, project_dir: Path) -> dict:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 

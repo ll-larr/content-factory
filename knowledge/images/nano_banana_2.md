@@ -8,11 +8,16 @@ native_audio: false
 max_clip_seconds: 0
 aspect_ratios: ["auto","1:1","3:2","2:3","4:3","3:4","4:5","5:4","9:16","16:9","21:9"]
 cost_tier: medium
+providers:                # Nano Banana Pro: премиум-кадры 2K/4K, лица сериала (FINAL §3.1): $0.14
+  wavespeed: { id: "google/nano-banana-pro", pricing: flat, usd_per_image: 0.14 }
 ---
 
 # Nano Banana Pro (nano_banana_2) — персонажи, текст, 4K
 
-> **ЛОВУШКА ИМЁН:** В CLI Higgsfield id `nano_banana_2` — это **Nano Banana Pro**, НЕ Nano Banana 2.
+> Премиум-кадр (character sheets, читаемый текст) для `film`/`series` (FINAL §4).
+> Бюджетный кадр UGC — Nano Banana 2 ($0.07). model-id WaveSpeed подтвердить спайком.
+
+> **ЛОВУШКА ИМЁН:** id `nano_banana_2` — это **Nano Banana Pro**, НЕ Nano Banana 2.
 > Настоящая Nano Banana 2 имеет id `nano_banana_flash`.
 > Эта карточка описывает `nano_banana_2` = Nano Banana Pro.
 
@@ -42,21 +47,18 @@ neutral pose, plain background
 + [канонический блок стиля]
 ```
 
-Референсы — параметр `input_images` (флаг CLI `--image`).
+Референсы передаются как изображения (имена полей — в providers-блоке/адаптере провайдера).
 
 ## Типовые ошибки
 
 - Перегруз промпта деталями ломает композицию листа — один персонаж, один лист.
 
-## Проверено разведкой CLI (2026-06-12, без генерации)
+## Параметры (разведка 2026-06-12 — сверить с providers-блоком и docs провайдера на спайке)
 
-**Параметры:**
 - `prompt` — обязателен
-- `input_images` — массив референс-изображений (флаг CLI `--image`)
-- `aspect_ratio` — enum: `auto`, `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; default `1:1`
+- референс-изображения (имена полей провайдера — в providers-блоке/адаптере)
+- `aspect_ratio` — `auto`, `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; default `1:1`
 - `resolution` — `1k` / `2k` / `4k`; default `2k`
-- `folder_id` — опциональный идентификатор папки
+- Цена — в providers-блоке (смета: `estimate_media_cost`, в $).
 
-**Смета:** 2 кредита за картинку.
-
-**Ожидает спайка (Task 2):** визуальное качество, точность воспроизведения текста.
+**Ожидает живого спайка:** визуальное качество, точность воспроизведения текста.

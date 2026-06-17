@@ -1,6 +1,22 @@
 import json
+from pathlib import Path
+
 import pytest
 from factory.shots import load_shots, ShotsError
+
+
+# --- единая конвенция путей файлов (закрытие TODO mix_audio.py) ---
+
+def test_segment_path_convention():
+    from factory.shots import segment_path
+    assert segment_path(Path("projects/p/episodes/ep01"), 3) == \
+        Path("projects/p/episodes/ep01/segments/003.mp4")
+
+
+def test_frame_path_convention():
+    from factory.shots import frame_path
+    assert frame_path(Path("projects/p/episodes/ep01"), 7) == \
+        Path("projects/p/episodes/ep01/storyboard/007.png")
 
 
 def write(tmp_path, data):

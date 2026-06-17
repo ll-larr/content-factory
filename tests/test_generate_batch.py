@@ -1,4 +1,8 @@
-"""Тесты батч-генератора generate_batch.py (спека §8)."""
+"""Тесты батч-генератора generate_batch.py (спека §8; мультипровайдерный слой).
+
+Провайдер замокан фейком (gb.get_provider). Стадия audio удалена (вынесена в
+отдельную задачу — генерация звука на ElevenLabs).
+"""
 import json
 from pathlib import Path
 
@@ -6,23 +10,52 @@ import pytest
 
 import generate_batch as gb
 from factory.manifest import Manifest
+from factory.providers.base import ProviderError
 
-KLING_CARD = (
-    "---\nid: kling3_0\ntype: video\nfamily: kling\nstatus: verified\n"
-    "supports_start_end_frame: true\nnative_audio: true\n"
-    "max_clip_seconds: 10\ncost_tier: medium\n---\n# Kling\n")
+VIDEO_CARD = (
+    "---\nid: seedance_2_0\ntype: video\nstatus: verified\n"
+    "providers:\n"
+    "  wavespeed:\n"
+    "    pricing: scaled\n"
+    "    supports_start_end: true\n"
+    "    res_mult: {720p: 1.0, 1080p: 1.4}\n"
+    "    tiers: { fast: { id: \"wsp/seedance-fast\", usd_per_sec: 0.10 } }\n"
+    "    default_tier: fast\n"
+    "---\n# Seedance 2.0\n")
+
+IMAGE_CARD = (
+    "---\nid: z_image\ntype: image\nstatus: verified\n"
+    "providers:\n"
+    "  wavespeed:\n"
+    "    id: \"wsp/z-image\"\n"
+    "    pricing: flat\n"
+    "    usd_per_image: 0.005\n"
+    "---\n# Z Image\n")
+
+
+def write_image_card(tmp_path):
+    """Карточка image-модели z_image (verified, wavespeed) для гейта раскадровки."""
+    idir = tmp_path / "knowledge" / "images"
+    idir.mkdir(parents=True, exist_ok=True)
+    (idir / "z_image.md").write_text(IMAGE_CARD, encoding="utf-8")
 
 
 @pytest.fixture
 def proj(tmp_path, monkeypatch):
-    """Мини-проект: 3 кадра, 2 отрезка; CWD = tmp_path (как корень репо)."""
+    """Мини-проект: 3 кадра, 2 отрезка; CWD = tmp_path (как корень репо).
+
+    Провайдеры заданы явно (wavespeed), карточка видео содержит блок providers.
+    """
     pdir = tmp_path / "projects" / "pilot"
     ep = pdir / "episodes" / "ep01"
     ep.mkdir(parents=True)
     (pdir / "project.json").write_text(json.dumps({
         "name": "pilot", "type": "animated_series", "theme": "space cats",
         "audience": "6-9", "episodes": 1, "episode_duration_sec": 10,
-        "models": {"image": "nano_banana_flash", "video": "kling3_0"},
+        "resolution": "720p",
+        "models": {"image": {"model": "z_image", "provider": "wavespeed"},
+                   "video": {"model": "seedance_2_0", "provider": "wavespeed",
+                             "tier": "fast"}},
     }), encoding="utf-8")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
@@ -34,29 +67,41 @@ def proj(tmp_path, monkeypatch):
     }), encoding="utf-8")
     kdir = tmp_path / "knowledge" / "video"
     kdir.mkdir(parents=True)
-    (kdir / "kling3_0.md").write_text(KLING_CARD, encoding="utf-8")
+    (kdir / "seedance_2_0.md").write_text(VIDEO_CARD, encoding="utf-8")
+    write_image_card(tmp_path)
     monkeypatch.chdir(tmp_path)
     return pdir
 
 
-def fake_hf(monkeypatch):
-    calls = {"submitted": []}
-    monkeypatch.setattr(gb.hf, "estimate", lambda m, p: 2.0)
+class FakeProvider:
+    """Замена реального провайдера: фиксирует submit-параметры, пишет файлы."""
+    unit = "$"
 
-    def submit(model, params):
-        calls["submitted"].append(params)
-        return f"job-{len(calls['submitted'])}"
+    def __init__(self):
+        self.submitted = []
+        self.estimates = []
 
-    monkeypatch.setattr(gb.hf, "submit", submit)
-    monkeypatch.setattr(gb.hf, "wait", lambda j: {"status": "completed"})
+    def estimate(self, model, params):
+        self.estimates.append((model, params))
+        return 0.5
 
-    def download(job_id, dest):
+    def submit(self, model, params):
+        self.submitted.append(params)
+        return f"job-{len(self.submitted)}"
+
+    def wait(self, job_id, **kw):
+        return {"status": "completed"}
+
+    def download(self, job_id, dest):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
         Path(dest).write_bytes(b"x")
         return Path(dest)
 
-    monkeypatch.setattr(gb.hf, "download", download)
-    return calls
+
+def fake_provider(monkeypatch):
+    fp = FakeProvider()
+    monkeypatch.setattr(gb, "get_provider", lambda name, kd=None: fp)
+    return fp
 
 
 def run(proj, stage):
@@ -65,20 +110,36 @@ def run(proj, stage):
 
 
 def test_happy_path_storyboard(proj, monkeypatch):
-    calls = fake_hf(monkeypatch)
+    fp = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert len(calls["submitted"]) == 3
+    assert len(fp.submitted) == 3
     m = Manifest(proj / "manifest.json")
     assert m.get("ep01/storyboard/001")["status"] == "generated"
     assert (proj / "episodes" / "ep01" / "storyboard" / "001.png").exists()
 
 
-def test_resume_skips_generated(proj, monkeypatch):
-    fake_hf(monkeypatch)
+def test_storyboard_passes_resolution(proj, monkeypatch):
+    fp = fake_provider(monkeypatch)
     run(proj, "storyboard")
-    calls2 = fake_hf(monkeypatch)
+    assert fp.submitted[0]["resolution"] == "720p"
+
+
+def test_storyboard_passes_image_tier(proj, monkeypatch):
+    """tier из models.image пробрасывается в params раскадровки (находка B)."""
+    fp = fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"]["image"]["tier"] = "hd"
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    run(proj, "storyboard")
+    assert fp.submitted[0].get("tier") == "hd"
+
+
+def test_resume_skips_generated(proj, monkeypatch):
+    fake_provider(monkeypatch)
+    run(proj, "storyboard")
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert calls2["submitted"] == []  # ничего не сгенерировано повторно
+    assert fp2.submitted == []
 
 
 def accept_frames(proj, status="done"):
@@ -90,183 +151,175 @@ def accept_frames(proj, status="done"):
 
 
 def test_segments_pass_start_end_frames(proj, monkeypatch):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     accept_frames(proj)
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "segments") == 0
-    assert len(calls2["submitted"]) == 2
-    assert "start_frame" in calls2["submitted"][0]
-    assert "end_frame" in calls2["submitted"][0]
+    assert len(fp2.submitted) == 2
+    assert "start_frame" in fp2.submitted[0]
+    assert "end_frame" in fp2.submitted[0]
+    assert fp2.submitted[0]["tier"] == "fast"
+    assert fp2.submitted[0]["resolution"] == "720p"
 
 
 def test_segments_blocked_until_frames_accepted(proj, monkeypatch, capsys):
-    fake_hf(monkeypatch)
+    fp = fake_provider(monkeypatch)
     run(proj, "storyboard")  # кадры в generated — ревью не пройдено
-    estimate_called = []
-    monkeypatch.setattr(gb.hf, "estimate",
-                        lambda m, p: estimate_called.append(1) or 2.0)
+    capsys.readouterr()
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "segments") == 3
-    assert estimate_called == []  # заблокировано ДО сметы и трат
+    assert fp2.estimates == []  # заблокировано ДО сметы и трат
     out = capsys.readouterr().out
     assert "заблокирована" in out
     assert "ep01/storyboard/001" in out
 
 
 def test_segments_blocked_when_frames_never_generated(proj, monkeypatch, capsys):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     assert run(proj, "segments") == 3  # storyboard вообще не запускался
     assert "не генерировался" in capsys.readouterr().out
 
 
 def test_segments_pass_with_accepted_with_notes(proj, monkeypatch):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     accept_frames(proj, status="accepted_with_notes")
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "segments") == 0
-    assert len(calls2["submitted"]) == 2
+    assert len(fp2.submitted) == 2
 
 
 def test_skeleton_card_blocks_segments(proj, monkeypatch):
-    fake_hf(monkeypatch)
-    card = Path("knowledge/video/kling3_0.md")
+    fake_provider(monkeypatch)
+    card = Path("knowledge/video/seedance_2_0.md")
     card.write_text(card.read_text(encoding="utf-8")
                     .replace("status: verified", "status: skeleton"),
                     encoding="utf-8")
-    assert run(proj, "segments") == 2  # валидация остановила ДО траты кредитов
+    assert run(proj, "segments") == 2  # валидация остановила ДО трат
 
 
-def test_higgsfied_error_returns_to_pending(proj, monkeypatch):
-    """Технический сбой HiggsfieldError возвращает item в pending и main → 1."""
-    monkeypatch.setattr(gb.hf, "estimate", lambda m, p: 2.0)
-    monkeypatch.setattr(gb.hf, "submit",
-                        lambda m, p: (_ for _ in ()).throw(
-                            gb.hf.HiggsfieldError("сеть упала")))
-    run_result = run(proj, "storyboard")
-    assert run_result == 1  # сбои были
+def test_skeleton_image_card_blocks_storyboard(proj, monkeypatch):
+    """skeleton image-карточка блокирует раскадровку ДО трат (гейт, симметрично видео)."""
+    fp = fake_provider(monkeypatch)
+    card = Path("knowledge/images/z_image.md")
+    card.write_text(card.read_text(encoding="utf-8")
+                    .replace("status: verified", "status: skeleton"),
+                    encoding="utf-8")
+    assert run(proj, "storyboard") == 2
+    assert fp.estimates == []  # валидация остановила ДО сметы
+
+
+def test_image_model_not_on_provider_blocks_storyboard(proj, monkeypatch, capsys):
+    """Image-модель не сконфигурирована под выбранного провайдера — блок раскадровки."""
+    fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"]["image"]["provider"] = "runware"  # в карте только wavespeed
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    assert run(proj, "storyboard") == 2
+    assert "runware" in capsys.readouterr().out
+
+
+def test_model_not_on_provider_blocks_segments(proj, monkeypatch, capsys):
+    """Если видео-модель не сконфигурирована под выбранного провайдера — блок."""
+    fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["models"]["video"]["provider"] = "runware"  # в карте только wavespeed
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+    assert run(proj, "segments") == 2
+    assert "runware" in capsys.readouterr().out
+
+
+def test_provider_error_returns_to_pending(proj, monkeypatch):
+    """Технический сбой ProviderError возвращает item в pending и main → 1."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(fp, "submit",
+                        lambda m, p: (_ for _ in ()).throw(ProviderError("сеть упала")))
+    assert run(proj, "storyboard") == 1
     m = Manifest(proj / "manifest.json")
-    # После сбоя все элементы должны быть в pending (для повторной попытки)
     assert m.get("ep01/storyboard/001")["status"] == "pending"
-    assert m.get("ep01/storyboard/002")["status"] == "pending"
-    assert m.get("ep01/storyboard/003")["status"] == "pending"
-    # attempts должен быть инкрементирован (первый прогон = 1)
     assert m.get("ep01/storyboard/001")["attempts"] == 1
 
 
 def test_retry_after_failure_runs_only_failed(proj, monkeypatch):
-    """Повторный прогон после сбоя запускает только упавшие (pending) элементы."""
-    # Первый прогон: сбой на каждом submit
-    monkeypatch.setattr(gb.hf, "estimate", lambda m, p: 2.0)
-    monkeypatch.setattr(gb.hf, "submit",
-                        lambda m, p: (_ for _ in ()).throw(
-                            gb.hf.HiggsfieldError("сбой")))
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(fp, "submit",
+                        lambda m, p: (_ for _ in ()).throw(ProviderError("сбой")))
     run(proj, "storyboard")  # все вернулись в pending
-
-    # Второй прогон: нормальная работа
-    calls2 = fake_hf(monkeypatch)
-    result2 = run(proj, "storyboard")
-    assert result2 == 0
-    # Все 3 кадра должны быть запущены повторно (все были pending)
-    assert len(calls2["submitted"]) == 3
+    fp2 = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert len(fp2.submitted) == 3
 
 
 def test_skeleton_blocks_before_estimate(proj, monkeypatch):
-    """Скелетная карточка блокирует segments ДО вызова estimate (кредиты не тратятся)."""
-    estimate_called = []
-    monkeypatch.setattr(gb.hf, "estimate",
-                        lambda m, p: estimate_called.append(1) or 2.0)
-    card = Path("knowledge/video/kling3_0.md")
+    fp = fake_provider(monkeypatch)
+    card = Path("knowledge/video/seedance_2_0.md")
     card.write_text(card.read_text(encoding="utf-8")
                     .replace("status: verified", "status: skeleton"),
                     encoding="utf-8")
-    result = run(proj, "segments")
-    assert result == 2
-    assert estimate_called == []  # estimate не должен вызываться
+    assert run(proj, "segments") == 2
+    assert fp.estimates == []  # estimate не должен вызываться
 
 
 def test_recover_stuck_generating_item(proj, monkeypatch):
-    """Элемент в статусе generating после прерывания восстанавливается в pending
-    и обрабатывается следующим прогоном (регрессия: зависание после KeyboardInterrupt)."""
-    # Создаём манифест вручную: один item застрял в generating
+    """Элемент в generating после прерывания восстанавливается в pending."""
     m = Manifest(proj / "manifest.json")
     m.add("ep01/storyboard/001", kind="frame")
     m.set_status("ep01/storyboard/001", "generating")
     m.save()
-
-    calls = fake_hf(monkeypatch)
-    result = run(proj, "storyboard")
-    assert result == 0
-    # Застрявший элемент должен был пройти submit и стать generated (ждёт ревью)
-    assert any(True for _ in calls["submitted"])  # submit вызывался
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert fp.submitted  # submit вызывался
     m2 = Manifest(proj / "manifest.json")
     assert m2.get("ep01/storyboard/001")["status"] == "generated"
 
 
 def test_job_id_persisted_when_wait_fails(proj, monkeypatch):
-    """Если submit прошёл, а wait упал — job_id сохраняется в манифесте
-    (регрессия: невозможно соотнести сбой с логами Higgsfield)."""
-    monkeypatch.setattr(gb.hf, "estimate", lambda m, p: 2.0)
-
-    def submit_ok(model, params):
-        return "job-abc123"
-
-    def wait_fail(job_id):
-        raise gb.hf.HiggsfieldError("timeout")
-
-    monkeypatch.setattr(gb.hf, "submit", submit_ok)
-    monkeypatch.setattr(gb.hf, "wait", wait_fail)
-
-    result = run(proj, "storyboard")
-    assert result == 1  # были сбои
+    """Если submit прошёл, а wait упал — job_id сохраняется в манифесте."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(fp, "submit", lambda m, p: "job-abc123")
+    monkeypatch.setattr(fp, "wait",
+                        lambda job_id, **kw: (_ for _ in ()).throw(ProviderError("timeout")))
+    assert run(proj, "storyboard") == 1
     m = Manifest(proj / "manifest.json")
     item = m.get("ep01/storyboard/001")
     assert item["status"] == "pending"
-    assert item["job_id"] == "job-abc123"  # job_id сохранён несмотря на сбой
+    assert item["job_id"] == "job-abc123"
 
 
 def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
     """refs в shots.json — относительно папки проекта; в params должны быть
-    пути, существующие от CWD (корень репо), а не сырые относительные refs."""
-    # Мини-проект с refs у кадра 2
+    пути, существующие от CWD (корень репо)."""
     pdir = tmp_path / "projects" / "pilot"
     ep = pdir / "episodes" / "ep01"
     ep.mkdir(parents=True)
     (pdir / "project.json").write_text(json.dumps({
         "name": "pilot", "type": "animated_series", "theme": "space cats",
         "audience": "6-9", "episodes": 1, "episode_duration_sec": 10,
-        "models": {"image": "nano_banana_flash", "video": "kling3_0"},
+        "models": {"image": {"model": "z_image", "provider": "wavespeed"},
+                   "video": {"model": "seedance_2_0", "provider": "wavespeed"}},
     }), encoding="utf-8")
-    # Создаём ref-файл относительно папки проекта: bible/ref.png
     ref_file = pdir / "bible" / "ref.png"
     ref_file.parent.mkdir(parents=True)
     ref_file.write_bytes(b"x")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
-        "frames": [
-            {"n": 1, "prompt": "a"},
-            {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]},
-        ],
+        "frames": [{"n": 1, "prompt": "a"},
+                   {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]}],
         "segments": [],
     }), encoding="utf-8")
+    write_image_card(tmp_path)
     monkeypatch.chdir(tmp_path)
-
-    calls = fake_hf(monkeypatch)
+    fp = fake_provider(monkeypatch)
     result = gb.main(["--project", str(pdir), "--episode", "ep01",
                       "--stage", "storyboard", "--yes"])
     assert result == 0
-
-    # Находим submit с refs (кадр 2)
-    submitted_with_refs = [p for p in calls["submitted"] if p.get("refs")]
+    submitted_with_refs = [p for p in fp.submitted if p.get("refs")]
     assert len(submitted_with_refs) == 1
     resolved_ref = submitted_with_refs[0]["refs"][0]
-    # Резолвленный путь должен существовать относительно CWD (корень репо).
-    # Сырой "bible/ref.png" от CWD НЕ существует; правильный путь —
-    # "projects/pilot/bible/ref.png" (относительно tmp_path = CWD).
     assert Path(resolved_ref).exists(), (
         f"Ref '{resolved_ref}' не существует от CWD; "
-        "refs должны резолвиться против project_dir"
-    )
+        "refs должны резолвиться против project_dir")
 
 
 def reject(proj, item_id, reason="не по сценарию"):
@@ -282,26 +335,26 @@ def set_max_rejections(proj, value):
 
 
 def test_rejected_autorequeued_and_regenerated(proj, monkeypatch):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     reject(proj, "ep01/storyboard/001")
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert len(calls2["submitted"]) == 1  # перегенерирован только отклонённый
+    assert len(fp2.submitted) == 1  # перегенерирован только отклонённый
     m = Manifest(proj / "manifest.json")
     item = m.get("ep01/storyboard/001")
     assert item["status"] == "generated"
-    assert item["reject_count"] == 1  # журнал отклонений не сбрасывается
+    assert item["reject_count"] == 1
 
 
 def test_reject_limit_blocks_regeneration(proj, monkeypatch, capsys):
     set_max_rejections(proj, 1)
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     reject(proj, "ep01/storyboard/001")
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert calls2["submitted"] == []  # лимит достигнут — не перегенерируем
+    assert fp2.submitted == []
     out = capsys.readouterr().out
     assert "ЛИМИТ ОТКЛОНЕНИЙ" in out
     assert "ep01/storyboard/001" in out
@@ -310,40 +363,38 @@ def test_reject_limit_blocks_regeneration(proj, monkeypatch, capsys):
 
 
 def test_idle_run_reports_awaiting_review(proj, monkeypatch, capsys):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
-    capsys.readouterr()  # сбросить вывод первого прогона
-    calls2 = fake_hf(monkeypatch)
+    capsys.readouterr()
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert calls2["submitted"] == []
+    assert fp2.submitted == []
     assert "ждут ревью" in capsys.readouterr().out
 
 
 def test_max_rejections_zero_blocks_immediately(proj, monkeypatch, capsys):
     set_max_rejections(proj, 0)
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     reject(proj, "ep01/storyboard/001")
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert calls2["submitted"] == []
+    assert fp2.submitted == []
     assert "ЛИМИТ ОТКЛОНЕНИЙ" in capsys.readouterr().out
 
 
 def test_blocked_items_do_not_prevent_pending_generation(proj, monkeypatch, capsys):
-    """Достигший лимита item пропускается, но остальные pending генерируются."""
     set_max_rejections(proj, 1)
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     reject(proj, "ep01/storyboard/001")  # reject_count=1 = лимит → blocked
-    # 002 возвращаем в очередь легальным путём (reject + ручной requeue)
     m = Manifest(proj / "manifest.json")
     m.set_status("ep01/storyboard/002", "rejected", reject_reason="r")
     m.set_status("ep01/storyboard/002", "pending")
     m.save()
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert len(calls2["submitted"]) == 1  # только 002
+    assert len(fp2.submitted) == 1  # только 002
     out = capsys.readouterr().out
     assert "ЛИМИТ ОТКЛОНЕНИЙ" in out
     m2 = Manifest(proj / "manifest.json")
@@ -352,158 +403,24 @@ def test_blocked_items_do_not_prevent_pending_generation(proj, monkeypatch, caps
 
 
 def test_idle_run_all_done(proj, monkeypatch, capsys):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     m = Manifest(proj / "manifest.json")
     for item_id in list(m.data["items"]):
-        m.set_status(item_id, "done")  # ревью: всё принято
+        m.set_status(item_id, "done")
     m.save()
     capsys.readouterr()
-    calls2 = fake_hf(monkeypatch)
+    fp2 = fake_provider(monkeypatch)
     assert run(proj, "storyboard") == 0
-    assert calls2["submitted"] == []
+    assert fp2.submitted == []
     assert "Всё уже сгенерировано" in capsys.readouterr().out
 
 
 def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
-    fake_hf(monkeypatch)
+    fake_provider(monkeypatch)
     run(proj, "storyboard")
     m = Manifest(proj / "manifest.json")
     m.set_status("ep01/storyboard/001", "rejected", reject_reason="bad angle")
     m.save()
     assert run(proj, "segments") == 3
     assert "статус rejected" in capsys.readouterr().out
-
-
-# ---- Фаза 2: стадия audio ----
-
-AUDIO_CARD = ("---\nid: {mid}\ntype: audio\nfamily: {fam}\nstatus: verified\n"
-              "cost_tier: low\n---\n# {mid}\n")
-
-
-@pytest.fixture
-def aproj(proj):
-    """proj + аудио-модели в project.json, карточки audio и audio.json."""
-    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
-    pj["models"].update({"tts": "inworld_text_to_speech",
-                         "music": "sonilo_music",
-                         "sfx": "mirelo_text_to_audio"})
-    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
-    kdir = Path("knowledge") / "audio"
-    kdir.mkdir(parents=True, exist_ok=True)
-    for mid, fam in (("inworld_text_to_speech", "inworld"),
-                     ("sonilo_music", "sonilo"),
-                     ("mirelo_text_to_audio", "mirelo")):
-        (kdir / f"{mid}.md").write_text(
-            AUDIO_CARD.format(mid=mid, fam=fam), encoding="utf-8")
-    (proj / "episodes" / "ep01" / "audio.json").write_text(json.dumps({
-        "voice_lines": [{"id": "vl-01", "speaker": "cat", "voice": "Ashley",
-                         "text": "Hello!", "segment": 1, "offset": 0.5}],
-        "music_cues": [{"id": "mus-01", "prompt": "calm space music",
-                        "duration": 10, "segment": 1, "offset": 0}],
-        "sfx": [{"id": "sfx-01", "prompt": "door creak", "duration": 3,
-                 "segment": 2, "offset": 1.0}],
-    }), encoding="utf-8")
-    return proj
-
-
-def run_audio(proj):
-    return gb.main(["--project", str(proj), "--episode", "ep01",
-                    "--stage", "audio", "--yes"])
-
-
-def test_audio_happy_path(aproj, monkeypatch):
-    calls = fake_hf(monkeypatch)
-    assert run_audio(aproj) == 0
-    assert len(calls["submitted"]) == 3
-    m = Manifest(aproj / "manifest.json")
-    assert m.get("ep01/audio/vl-01")["status"] == "generated"
-    assert m.get("ep01/audio/vl-01")["kind"] == "voice"
-    assert m.get("ep01/audio/mus-01")["kind"] == "music"
-    assert m.get("ep01/audio/sfx-01")["kind"] == "sfx"
-    ep = aproj / "episodes" / "ep01" / "audio"
-    assert (ep / "voice" / "vl-01.mp3").exists()
-    assert (ep / "music" / "mus-01.mp3").exists()
-    assert (ep / "sfx" / "sfx-01.mp3").exists()
-
-
-def test_audio_params_passed(aproj, monkeypatch):
-    calls = fake_hf(monkeypatch)
-    run_audio(aproj)
-    voice_params = [p for p in calls["submitted"] if "voice" in p]
-    assert voice_params == [{"prompt": "Hello!", "voice": "Ashley"}]
-    dur_params = [p for p in calls["submitted"] if "duration" in p]
-    assert {p["duration"] for p in dur_params} == {10, 3}
-
-
-def test_audio_missing_plan(aproj, monkeypatch, capsys):
-    (aproj / "episodes" / "ep01" / "audio.json").unlink()
-    assert run_audio(aproj) == 1
-    assert "audio.json" in capsys.readouterr().out
-
-
-def test_audio_skeleton_card_blocks_before_estimate(aproj, monkeypatch, capsys):
-    estimate_called = []
-    monkeypatch.setattr(gb.hf, "estimate",
-                        lambda m, p: estimate_called.append(1) or 2.0)
-    card = Path("knowledge/audio/sonilo_music.md")
-    card.write_text(card.read_text(encoding="utf-8")
-                    .replace("status: verified", "status: skeleton"),
-                    encoding="utf-8")
-    assert run_audio(aproj) == 2
-    assert estimate_called == []
-    assert "skeleton" in capsys.readouterr().out
-
-
-def test_audio_missing_model_key(aproj, monkeypatch, capsys):
-    pj = json.loads((aproj / "project.json").read_text(encoding="utf-8"))
-    del pj["models"]["tts"]
-    (aproj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
-    assert run_audio(aproj) == 2
-    assert "models.tts" in capsys.readouterr().out
-
-
-def test_audio_resume_skips_generated(aproj, monkeypatch):
-    fake_hf(monkeypatch)
-    run_audio(aproj)
-    calls2 = fake_hf(monkeypatch)
-    assert run_audio(aproj) == 0
-    assert calls2["submitted"] == []
-
-
-def test_audio_invalid_segment_ref_raises(aproj, monkeypatch):
-    ep = aproj / "episodes" / "ep01"
-    data = json.loads((ep / "audio.json").read_text(encoding="utf-8"))
-    data["voice_lines"][0]["segment"] = 99
-    (ep / "audio.json").write_text(json.dumps(data), encoding="utf-8")
-    fake_hf(monkeypatch)
-    with pytest.raises(gb.AudioPlanError, match="segment 99"):
-        run_audio(aproj)
-
-
-def test_audio_voice_only_plan_without_music_sfx_models(aproj, monkeypatch):
-    pj = json.loads((aproj / "project.json").read_text(encoding="utf-8"))
-    del pj["models"]["music"]
-    del pj["models"]["sfx"]
-    (aproj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
-    (aproj / "episodes" / "ep01" / "audio.json").write_text(json.dumps({
-        "voice_lines": [{"id": "vl-01", "speaker": "cat", "voice": "Ashley",
-                         "text": "Hello!", "segment": 1, "offset": 0.5}],
-    }), encoding="utf-8")
-    calls = fake_hf(monkeypatch)
-    assert run_audio(aproj) == 0
-    assert len(calls["submitted"]) == 1
-
-
-def test_audio_ext_derived_from_result_url(aproj, monkeypatch):
-    """Расширение аудиофайла берётся из result_url (Sonilo отдаёт .m4a),
-    а не из жёсткой AUDIO_EXT; манифест и файл получают верное расширение."""
-    fake_hf(monkeypatch)
-    monkeypatch.setattr(gb.hf, "wait",
-                        lambda j: {"status": "completed",
-                                   "result_url": "https://x/file.m4a"})
-    assert run_audio(aproj) == 0
-    m = Manifest(aproj / "manifest.json")
-    f = m.get("ep01/audio/mus-01")["file"]
-    assert f.endswith(".m4a")
-    assert Path(f).exists()

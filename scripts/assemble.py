@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from factory.ffmpeg_tools import FfmpegError, probe_duration, run_ffmpeg
 from factory.manifest import Manifest, ManifestError
 from factory.project import load_project
-from factory.shots import load_shots
+from factory.shots import load_shots, segment_path
 
 ACCEPTED = {"done", "accepted_with_notes"}
 DURATION_TOLERANCE = 0.05  # ±5% (спека §12)
@@ -68,7 +68,7 @@ def main(argv=None) -> int:
 
     files = []
     for seg in sorted(segments, key=lambda item: item["n"]):
-        f = episode_dir / "segments" / f"{seg['n']:03d}.mp4"
+        f = segment_path(episode_dir, seg["n"])
         if not f.exists():
             print(f"Файл отрезка не найден: {f}")
             return 1
