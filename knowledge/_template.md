@@ -1,7 +1,7 @@
 ---
 id: <model-id>           # стабильный id модели (не зависит от провайдера)
 type: image | video
-family: <nano-banana|kling|seedance|veo|grok|soul|seedream|wan|hailuo|vidu|pixverse|flux>
+family: <nano-banana|kling|seedance|veo|grok|seedream|wan|hailuo|vidu|pixverse|flux>
 status: skeleton         # skeleton | verified (после живой проверки маппинга провайдера)
 supports_start_end_frame: false   # legacy-фолбэк (provider=None); под провайдера — в providers.*
 native_audio: false
