@@ -506,3 +506,27 @@ def test_submit_unknown_tier_raises(kdir):
     with pytest.raises(ProviderError, match="tier"):
         p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "tier": "nonexistent",
                                   "start_frame": "http://x/a.png"})
+
+
+def test_openrouter_download_sends_bearer(kdir, tmp_path, monkeypatch):
+    """OpenRouter unsigned_urls (api/v1/videos/<id>/content) ТРЕБУЮТ Bearer —
+    скачивание должно слать Authorization (иначе HTTP 401, выявлено на спайке)."""
+    import urllib.request
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-123")
+    p = make("openrouter", kdir)
+    captured = {}
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b"VIDEOBYTES"
+
+    def fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "out.mp4"
+    p._download_file("https://openrouter.ai/api/v1/videos/x/content?index=0", str(dest))
+    assert captured["auth"] == "Bearer test-key-123"
+    assert dest.read_bytes() == b"VIDEOBYTES"

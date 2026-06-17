@@ -2,23 +2,20 @@
 id: veo3_1_lite
 type: video
 family: veo
-status: skeleton
+status: verified          # OpenRouter подтверждён живьём 2026-06-17 (submit→poll→download, $0.12/4с 720p)
 supports_start_end_frame: true
 native_audio: false
-max_clip_seconds: 0
+max_clip_seconds: 8
 aspect_ratios: []
 cost_tier: medium
-providers:                # flat ~$0.05/с; UGC/говорящая голова/lipsync (FINAL §4)
-  openrouter:
+providers:                # flat; UGC/говорящая голова/lipsync (FINAL §4). OpenRouter — дом Veo.
+  openrouter:             # models-list+живой тест 2026-06-17: frames first/last, 720p/1080p
     supports_start_end: true
     pricing: flat
     id: "google/veo-3.1-lite"
-    usd_per_sec: 0.05
-  wavespeed:
-    supports_start_end: true
-    pricing: flat
-    id: "google/veo3.1-lite/image-to-video"
-    usd_per_sec: 0.05
+    usd_per_sec: 0.03     # 720p без аудио (подтверждено живьём); 1080p дороже
+    allowed_durations: [4, 6, 8]   # ⚠️ НЕ 5/10 — для отрезков 5с не подойдёт
+  # WaveSpeed-маппинг Veo был догадкой, не подтверждён — убран; добавить после спайка WS при необходимости
 ---
 
 # Google Veo 3.1 Lite — UGC, lipsync, бюджет (flat)
