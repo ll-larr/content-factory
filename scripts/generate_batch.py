@@ -24,7 +24,7 @@ from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
 from factory.providers import get_provider
 from factory.providers.base import ProviderError
-from factory.shots import load_shots
+from factory.shots import frame_path, load_shots, segment_path
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
@@ -43,7 +43,7 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                 "item_id": f"{ep}/storyboard/{f['n']:03d}",
                 "kind": "frame",
                 "model": project.image_model,
-                "dest": episode_dir / "storyboard" / f"{f['n']:03d}.png",
+                "dest": frame_path(episode_dir, f["n"]),
                 "params": {"prompt": f["prompt"], "refs": resolved_refs,
                            "aspect_ratio": aspect, "resolution": project.resolution,
                            "tier": project.image_tier},
@@ -54,13 +54,11 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
                 "item_id": f"{ep}/segments/{s['n']:03d}",
                 "kind": "segment",
                 "model": project.video_model,
-                "dest": episode_dir / "segments" / f"{s['n']:03d}.mp4",
+                "dest": segment_path(episode_dir, s["n"]),
                 "params": {
                     "prompt": s["prompt"],
-                    "start_frame": str(episode_dir / "storyboard"
-                                       / f"{s['start_frame']:03d}.png"),
-                    "end_frame": str(episode_dir / "storyboard"
-                                     / f"{s['end_frame']:03d}.png"),
+                    "start_frame": str(frame_path(episode_dir, s["start_frame"])),
+                    "end_frame": str(frame_path(episode_dir, s["end_frame"])),
                     "duration": project.segment_seconds,
                     "aspect_ratio": aspect,
                     "resolution": project.resolution,

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from factory.audio_plan import is_empty, load_audio_plan
 from factory.ffmpeg_tools import FfmpegError, probe_duration, run_ffmpeg
 from factory.manifest import Manifest, ManifestError
-from factory.shots import load_shots
+from factory.shots import load_shots, segment_path
 
 ACCEPTED = {"done", "accepted_with_notes"}
 VOICE_VOLUME = 1.0
@@ -39,9 +39,7 @@ def segment_timeline(shots: dict, episode_dir: Path):
     durs: dict[int, float] = {}
     t = 0.0
     for s in sorted(shots["segments"], key=lambda item: item["n"]):
-        # TODO фаза 3: путь к файлу отрезка строится также в generate_batch.py
-        # и assemble.py — вынести конвенцию в одно место (factory/shots.py).
-        f = episode_dir / "segments" / f"{s['n']:03d}.mp4"
+        f = segment_path(episode_dir, s["n"])
         if not f.exists():
             raise FfmpegError(f"Файл отрезка не найден: {f}")
         d = probe_duration(f)
