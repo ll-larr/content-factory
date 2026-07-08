@@ -2,14 +2,14 @@
 id: nano_banana_flash
 type: image
 family: nano-banana
-status: skeleton          # маппинг провайдера не проверен живьём — блокирует трату до спайка
+status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (1k, 1376x768 PNG 16:9, $0.07 сверено списанием)
 supports_start_end_frame: false
 native_audio: false
 max_clip_seconds: 0
 aspect_ratios: ["1:1","3:2","2:3","4:3","3:4","4:5","5:4","9:16","16:9","21:9"]
 cost_tier: low
 providers:                # Nano Banana 2 — бюджетный UGC-кадр (FINAL §3.1 ~$0.07); id/цена — ДОГАДКА, сверить спайком
-  wavespeed: { id: "google/nano-banana-2/text-to-image", pricing: flat, usd_per_image: 0.07 }  # реальный path (/api/v3/models 2026-06-17)
+  wavespeed: { id: "google/nano-banana-2/text-to-image", resolution_style: k, pricing: flat, usd_per_image: 0.07 }  # реальный path; resolution ТОЛЬКО 0.5k/1k/2k/4k, "720p" -> HTTP 400 (живьём 2026-07-08)
 ---
 
 # Nano Banana 2 (nano_banana_flash) — рабочая лошадка раскадровки

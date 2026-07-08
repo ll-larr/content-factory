@@ -2,14 +2,14 @@
 id: seedream_v4_5
 type: image
 family: seedream
-status: skeleton
+status: verified          # WaveSpeed подтверждён живьём 2026-07-08 ($0.04, файл получен; без size вышел квадрат 2048x2048 — контракт size тот же, что у flux, живьём size-маппинг проверен на flux); OpenRouter НЕ проверен
 supports_start_end_frame: false
 native_audio: false
 max_clip_seconds: 0
 aspect_ratios: []
 cost_tier: unknown
 providers:                # рабочая лошадка кадров, консистентность (FINAL §3.1): $0.04
-  wavespeed:  { id: "bytedance/seedream-v4.5", pricing: flat, usd_per_image: 0.04 }
+  wavespeed:  { id: "bytedance/seedream-v4.5", resolution_style: size, pricing: flat, usd_per_image: 0.04 }  # схема знает ТОЛЬКО size "W*H" (2026-07-08)
   openrouter: { id: "bytedance/seedream-4.5",  pricing: flat, usd_per_image: 0.04 }
 ---
 

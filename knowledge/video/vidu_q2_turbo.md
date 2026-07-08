@@ -2,7 +2,7 @@
 id: vidu_q2_turbo
 type: video
 family: vidu
-status: skeleton          # маппинг провайдера не проверен живьём — блокирует трату до спайка
+status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (5с 720p start→end, $0.20, интерполяция ✓); Runware НЕ проверен (баланс $0)
 supports_start_end_frame: true
 native_audio: false
 providers:
@@ -12,13 +12,13 @@ providers:
     res_mult: {720p: 1.0, 1080p: 2.25}
     id: "vidu:3@2"        # Vidu Q2 Turbo — реальный AIR (modelSearch 2026-06-17)
     usd_per_sec: 0.021
-  wavespeed:              # WaveSpeed v3 JSON: start-end-to-video-q2-turbo (поля start_frame/end_frame)
+  wavespeed:              # WaveSpeed v3 JSON: start-end-to-video-q2-turbo (живьём 2026-07-08)
     supports_start_end: true
     pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 1.4}
+    res_mult: {720p: 1.0, 1080p: 1.875}   # по каталожной формуле: 375000/200000 при 5с
     id: "vidu/start-end-to-video-q2-turbo"
-    media: { start: start_frame, end: end_frame }
-    usd_per_sec: 0.021    # цену WaveSpeed Vidu Q2T сверить (FINAL подтверждал только Runware)
+    media: { start: image, end: last_image }  # реальные поля из схемы /api/v3/models (2026-07-08); прежние start_frame/end_frame были догадкой
+    usd_per_sec: 0.04     # НЕЛИНЕЙНО: реальная формула 720p = (duration-1)*$0.05 (5с = $0.20, сверено списанием 2026-07-08); 0.04/с точен ТОЛЬКО для 5с-отрезков конвейера
     # Альтернатива — загрузка файлов кадров: api: v1_multipart, id: "vidu/turbo/start-end-to-video"
 ---
 

@@ -42,8 +42,9 @@ class WaveSpeedProvider(BaseHTTPProvider):
         if pv.get("api") == "v1_multipart":
             return self._submit_multipart(path, params, start_field, end_field)
 
-        resp = self._request("POST", f"{_API}/{path}",
-                             json_body=self._payload(card, params, start_field, end_field))
+        body = self._payload(card, params, start_field, end_field)
+        self._apply_resolution_style(pv, body)
+        resp = self._request("POST", f"{_API}/{path}", json_body=body)
         job_id = (resp.get("data") or {}).get("id")
         if not job_id:
             raise WaveSpeedError(f"submit без data.id: {resp!r}")
@@ -51,6 +52,48 @@ class WaveSpeedProvider(BaseHTTPProvider):
 
     def poll(self, job_id: str) -> dict:
         return self._request("GET", f"{_API}/predictions/{job_id}/result")
+
+    # Стили разрешения (живые схемы /api/v3/models, 2026-07-08):
+    # size-модели (flux/seedream/z_image) знают только size "W*H" — aspect_ratio и
+    # resolution молча игнорируются (получается квадрат по умолчанию);
+    # k-модели (nano-banana) хотят resolution в k-нотации, "720p" -> HTTP 400;
+    # omit-модели (kling) вообще без resolution/aspect_ratio в схеме — выбрасываем.
+    _SIZE_TABLE = {
+        ("720p", "16:9"): "1280*720", ("720p", "9:16"): "720*1280",
+        ("720p", "1:1"): "1024*1024",
+        ("1080p", "16:9"): "1920*1080", ("1080p", "9:16"): "1080*1920",
+        ("1080p", "1:1"): "2048*2048",
+    }
+    _K_TABLE = {"720p": "1k", "1080p": "2k"}
+    _K_NATIVE = {"0.5k", "1k", "2k", "4k"}
+
+    def _apply_resolution_style(self, pv: dict, body: dict) -> None:
+        style = pv.get("resolution_style")
+        if not style:
+            return
+        resolution = body.pop("resolution", None)
+        if style == "omit":
+            body.pop("aspect_ratio", None)
+        elif style == "size":
+            aspect = body.pop("aspect_ratio", None) or "16:9"
+            size = self._SIZE_TABLE.get((resolution, aspect))
+            if not size:
+                raise WaveSpeedError(
+                    f"resolution_style=size: нет маппинга для "
+                    f"({resolution!r}, {aspect!r}); известны {sorted(self._SIZE_TABLE)}")
+            body["size"] = size
+        elif style == "k":
+            if resolution in self._K_NATIVE:
+                body["resolution"] = resolution
+            elif resolution in self._K_TABLE:
+                body["resolution"] = self._K_TABLE[resolution]
+            elif resolution is not None:
+                raise WaveSpeedError(
+                    f"resolution_style=k: неизвестное разрешение {resolution!r}; "
+                    f"жду {sorted(self._K_NATIVE | set(self._K_TABLE))}")
+        else:
+            raise WaveSpeedError(
+                f"неизвестный resolution_style {style!r} (знаю: size, k, omit)")
 
     # ---- v3 JSON ----
     def _payload(self, card: dict, params: dict,
