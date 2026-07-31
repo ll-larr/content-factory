@@ -9,3 +9,6 @@ projects/**/*.wav
 spike/
 .pytest_cache/
 .understand-anything/
+.env
+.env.*
+!.env.example
