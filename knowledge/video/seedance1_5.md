@@ -16,7 +16,7 @@ providers:
     res_mult: {720p: 1.0, 1080p: 2.0}   # из формулы каталога: 720p=1, 1080p=2 (прежние 1.4 были догадкой)
     allowed_durations: [4, 8, 12]
     tiers:
-      pro: { id: "bytedance/seedance-v1.5-pro/image-to-video", usd_per_sec: 0.052 }  # формула каталога: duration*0.26/5*(generate_audio?1:0.5) → 4с со звуком = $0.208; живьём списано $0.21
+      pro: { id: "bytedance/seedance-v1.5-pro/image-to-video", usd_per_sec: 0.053 }  # формула каталога: duration*0.26/5*(generate_audio?1:0.5) → 4с со звуком = $0.208, но живьём списано $0.21 — округлено ВВЕРХ до 0.053 (4с = $0.212), чтобы смета не занижала фактическое списание
     default_tier: pro
   # Runware/OpenRouter — добавить после подтверждения хостинга/id/цены на спайке
 ---
