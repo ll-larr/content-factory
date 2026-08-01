@@ -2,7 +2,7 @@
 id: vidu_q2_turbo
 type: video
 family: vidu
-status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (5с 720p start→end, $0.20, интерполяция ✓); Runware подтверждён живьём 2026-08-01 (vidu:3@2, width/height 1280x720 + frameImages first/last → файл 1284x716 h264, 5.125с, $0.11 по полю cost) — на Runware та же генерация вдвое дешевле
+status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (5с 720p start→end, $0.20, интерполяция ✓); Runware подтверждён живьём 2026-08-01 (vidu:3@2, width/height 1280x720 + frameImages first/last → файл 1284x716 h264, 5.125с, $0.11 по полю cost) — на Runware та же генерация в ~1.8x дешевле, чем на WaveSpeed
 supports_start_end_frame: true
 native_audio: false
 providers:
