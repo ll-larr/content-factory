@@ -46,6 +46,10 @@
 
 ## Задача 1: Мёрж `spike/provider-verification` → `master`
 
+> **Статус: выполнено 2026-08-01.** Все шаги пройдены как задумано, без расхождений с
+> планом — мёрж `22c2065`, 219 passed, гейт снят на 10 файлах, запушено, ветка спайка
+> удалена локально и на origin.
+
 Главный долг: ветка висит с 2026-06-17, в ней 6 коммитов — фикс контрактного бага `resolution_style`, +175 строк тестов, 8 verified-карточек, роадмап и хэндофф. Пока не слита, `master` физически неработоспособен: все карточки кадров и отрезков `skeleton`, `generate_batch` возвращает код 2 на любой модели.
 
 **Files:**
@@ -54,7 +58,7 @@
 **Interfaces:**
 - Produces: `master` с verified-карточками (`z_image_turbo`, `flux_2_klein`, `seedream_v4_5`, `nano_banana_flash`, `nano_banana_2`, `veo3_1_lite`, `vidu_q2_turbo`, `kling3_0`), рабочим `resolution_style` в `wavespeed.py`, роадмапом и хэндоффом в `docs/`. Все последующие задачи стоят на этом.
 
-- [ ] **Шаг 1: Проверить, что рабочее дерево чистое и мёрж пройдёт без конфликтов**
+- [x] **Шаг 1: Проверить, что рабочее дерево чистое и мёрж пройдёт без конфликтов**
 
 ```bash
 git status --short && git merge-tree --write-tree --name-only master spike/provider-verification; echo "exit=$?"
@@ -62,13 +66,13 @@ git status --short && git merge-tree --write-tree --name-only master spike/provi
 
 Ожидание: `git status --short` пустой; `exit=0` (проверено 2026-08-01 — конфликтов нет). Если exit≠0 — конфликты в перечисленных файлах, разбирать вручную, не форсировать.
 
-- [ ] **Шаг 2: Слить спайк в master**
+- [x] **Шаг 2: Слить спайк в master**
 
 ```bash
 git checkout master && git merge --no-ff spike/provider-verification -m "merge spike/provider-verification: 8 моделей verified живьём + card-driven resolution_style"
 ```
 
-- [ ] **Шаг 3: Прогнать тесты**
+- [x] **Шаг 3: Прогнать тесты**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q
@@ -76,7 +80,9 @@ git checkout master && git merge --no-ff spike/provider-verification -m "merge s
 
 Ожидание: **219 passed**. Если меньше — не пушить, разбираться.
 
-- [ ] **Шаг 4: Проверить, что гейт трат снят**
+Факт: 219 passed — совпало с ожиданием.
+
+- [x] **Шаг 4: Проверить, что гейт трат снят**
 
 ```bash
 git grep -c "^status: verified" -- knowledge
@@ -84,7 +90,9 @@ git grep -c "^status: verified" -- knowledge
 
 Ожидание: 8 карточек моделей + 2 исторические аудио (`mirelo_text_to_audio`, `sonilo_music`) = 10 файлов.
 
-- [ ] **Шаг 5: Запушить и убрать ветку**
+Факт: 10 файлов — совпало с ожиданием.
+
+- [x] **Шаг 5: Запушить и убрать ветку**
 
 ```bash
 git push origin master && git push origin --delete spike/provider-verification && git branch -d spike/provider-verification
@@ -94,6 +102,13 @@ git push origin master && git push origin --delete spike/provider-verification &
 
 ## Задача 2: Гигиена окружения (ops — выполняет пользователь)
 
+> **Статус: НЕ закрыто.** Шаг 2 (баланс WaveSpeed) фактически выполнен — иначе списания
+> $0.90/$0.21 за seedance в Задаче 6 не прошли бы (сравни с остатком $0.11 на 2026-07-08).
+> Шаги 1, 3, 4 не подтверждены выполненными. Ключи `WAVESPEED_API_KEY`/`RUNWARE_API_KEY`/
+> `OPENROUTER_API_KEY` (кроме факта, что Runware пополнен) остаются непеределанными с
+> момента утечки в чат 2026-06-17, копия `D:\content-factory` остаётся неразобранной —
+> это осознанный, видимый долг, а не забытая галочка.
+
 Не код: три вещи, которые нельзя починить из репо.
 
 **Files:** нет
@@ -102,9 +117,15 @@ git push origin master && git push origin --delete spike/provider-verification &
 
 Ключи `WAVESPEED_API_KEY`, `RUNWARE_API_KEY`, `OPENROUTER_API_KEY` засветились в чате 2026-06-17 и с тех пор не менялись. Перевыпустить в кабинетах (wavespeed.ai, my.runware.ai, openrouter.ai), старые отозвать, положить новые в `C:\Users\lar\.spike_env`. Через чат новые значения **не пересылать**.
 
-- [ ] **Шаг 2: Пополнить WaveSpeed**
+- [x] **Шаг 2: Пополнить WaveSpeed**
 
 Остаток на 2026-07-08 — **$0.11**, задача 7 требует ~$0.70. Пополнить на сумму, покрывающую хвост Фазы 2 с запасом. Runware уже пополнен (подтверждено 2026-08-01).
+
+Факт: пополнено пользователем — Задача 6 живьём списала $0.90 + $0.21 = $1.11, что
+на порядок больше остатка $0.11 на 2026-07-08. Отмечено выполненным по этой косвенной
+улике (счёт баланса напрямую не выведен в git-историю). Примечание: текст выше ссылается
+на «задача 7» как на потребителя бюджета — это опечатка самого плана (расходует деньги
+Задача 6, Задача 7/дакинг бесплатна), не трогаю задним числом.
 
 - [ ] **Шаг 3: Разобраться с устаревшей копией `D:\content-factory`**
 
@@ -122,6 +143,15 @@ git push origin master && git push origin --delete spike/provider-verification &
 
 ## Задача 3: Честное расширение файла кадра (JPEG сохраняется как `.png`)
 
+> **Статус: выполнено 2026-08-01** (коммиты `f8847f2`, `49e19d8`). Шаги 1–9 пройдены как
+> задумано. Разошлось с планом после Шага 9: код-ревью (не предусмотрено этим планом как
+> отдельный шаг, но выполнено по факту) нашло 2 Important-находки, которых план не
+> предвидел — `ensure_png` сносил временник в `finally` безусловно, при сбое
+> `run_ffmpeg` терялись и оригинал, и результат; и `FfmpegError` (не `ProviderError`)
+> вылетал из `generate_batch.main()` неперехваченным, обрывая батч вместо возврата
+> элемента в `pending`. Фикс в `49e19d8` добавил тесты на оба случая — итог **225 passed**,
+> не 223, как ожидал Шаг 8.
+
 Латентный баг из хэндоффа §4.7: WaveSpeed отдаёт JPEG, `frame_path` жёстко даёт `NNN.png` — содержимое верное, расширение врёт. Переименовывать файл нельзя: конвенция путей `episodes/<ep>/storyboard/NNN.png` — контракт, на который ссылаются `refs` в `shots.json`, написанные человеком. Значит нормализуем содержимое, а не имя: если байты не PNG — перекодируем через ffmpeg (уже обязательная зависимость).
 
 **Files:**
@@ -135,7 +165,7 @@ git push origin master && git push origin --delete spike/provider-verification &
 - Produces: `ensure_png(path: Path) -> Path` — возвращает тот же путь; PNG оставляет байт-в-байт, не-PNG перекодирует на месте.
 - Consumes: `run_ffmpeg(args: list[str]) -> None` из того же модуля.
 
-- [ ] **Шаг 1: Добавить фикстуру JPEG в conftest**
+- [x] **Шаг 1: Добавить фикстуру JPEG в conftest**
 
 В `tests/conftest.py`, после фикстуры `make_tone`:
 
@@ -152,7 +182,7 @@ def make_jpeg():
     return _make
 ```
 
-- [ ] **Шаг 2: Написать падающий тест**
+- [x] **Шаг 2: Написать падающий тест**
 
 Создать `tests/test_ffmpeg_tools.py`:
 
@@ -190,7 +220,7 @@ def test_ensure_png_leaves_no_temp_files(tmp_path, make_jpeg):
     assert [p.name for p in tmp_path.iterdir()] == ["001.png"]
 ```
 
-- [ ] **Шаг 3: Убедиться, что тест падает**
+- [x] **Шаг 3: Убедиться, что тест падает**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_ffmpeg_tools.py -q
@@ -198,7 +228,7 @@ def test_ensure_png_leaves_no_temp_files(tmp_path, make_jpeg):
 
 Ожидание: FAIL — `ImportError: cannot import name 'ensure_png' from 'factory.ffmpeg_tools'`.
 
-- [ ] **Шаг 4: Реализовать `ensure_png`**
+- [x] **Шаг 4: Реализовать `ensure_png`**
 
 В `scripts/factory/ffmpeg_tools.py` добавить `import os` к импортам и функцию в конец файла:
 
@@ -225,7 +255,7 @@ def ensure_png(path: Path) -> Path:
     return path
 ```
 
-- [ ] **Шаг 5: Убедиться, что тест проходит**
+- [x] **Шаг 5: Убедиться, что тест проходит**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_ffmpeg_tools.py -q
@@ -233,7 +263,7 @@ def ensure_png(path: Path) -> Path:
 
 Ожидание: 3 passed.
 
-- [ ] **Шаг 6: Подключить вызов в конвейер**
+- [x] **Шаг 6: Подключить вызов в конвейер**
 
 В `scripts/generate_batch.py` дописать импорт рядом с остальными `factory`-импортами:
 
@@ -250,7 +280,7 @@ from factory.ffmpeg_tools import ensure_png
                 ensure_png(j["dest"])
 ```
 
-- [ ] **Шаг 7: Починить фейковый провайдер и добавить тест интеграции**
+- [x] **Шаг 7: Починить фейковый провайдер и добавить тест интеграции**
 
 В `tests/test_generate_batch.py` заменить тело `FakeProvider.download` (сейчас пишет `b"x"` — не PNG, `ensure_png` уронит на нём ffmpeg):
 
@@ -282,7 +312,7 @@ def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
     assert calls == []
 ```
 
-- [ ] **Шаг 8: Прогнать весь набор**
+- [x] **Шаг 8: Прогнать весь набор**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q
@@ -290,7 +320,10 @@ def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
 
 Ожидание: **223 passed** (219 + 3 новых в `test_ffmpeg_tools` + 1 в `test_generate_batch`).
 
-- [ ] **Шаг 9: Коммит**
+Факт: сначала 223, как и ожидалось. Финальные 225 — уже после ревью-фикса `49e19d8`
+(см. пометку у заголовка задачи), в этот шаг они не входили.
+
+- [x] **Шаг 9: Коммит**
 
 ```bash
 git add scripts/factory/ffmpeg_tools.py scripts/generate_batch.py tests/conftest.py tests/test_ffmpeg_tools.py tests/test_generate_batch.py && git commit -m "fix(frames): нормализация кадра в настоящий PNG (WaveSpeed отдаёт JPEG)"
@@ -304,6 +337,21 @@ git add scripts/factory/ffmpeg_tools.py scripts/generate_batch.py tests/conftest
 
 ## Задача 4: Живая image-генерация Runware
 
+> **Статус: выполнено 2026-08-01, разошлось с планом.** Задача 4 предполагала, что
+> `scripts/factory/providers/runware.py` трогать не придётся (в «Files» ниже его нет) —
+> живая проба (Шаг 2) показала иначе: первый запуск упал HTTP 400
+> `missingDimensionParameters` — исход, которого не было среди «Ошибка insufficientCredits
+> / Ошибка про architectureId» в ожидании Шага 2. Причина: `imageInference` требует
+> целые `width`/`height`, а не строку `resolution` — Шаг 3 плана предполагал этот класс
+> бага только для видео-моделей (Задача 5), реальность показала, что и image тоже.
+> Из-за этого код-фикс `runware.py` стал общим для Задачи 4 и Задачи 5 (коммит `51f52b7`,
+> width/height + `deliveryMethod=async` сразу для image и video) — задачи в итоге
+> делались вместе, не последовательно двумя независимыми коммитами, как предполагал план.
+> Коммитов вместо одного «feat(knowledge): flux_2_klein verified на Runware живьём» вышло
+> четыре: `d1c40c1` (зафиксировать блокер), `51f52b7` (код-фикс), `4b341a0` (гейт
+> `preflight_problems`, см. пометку в Задаче 5), `1c9231b` (причесать шапку контракта).
+> Итог по факту: `flux_2_klein` verified, 1280x720 MJPEG, $0.00169.
+
 **Files:**
 - Create: `spike/live_runware_image.py` (не коммитится — `spike/` в `.gitignore`)
 - Modify: `knowledge/images/flux_2_klein.md` (frontmatter `status`)
@@ -313,7 +361,7 @@ git add scripts/factory/ffmpeg_tools.py scripts/generate_batch.py tests/conftest
 - Consumes: `get_provider("runware")` → `RunwareProvider` с методами `estimate/submit/wait/download` (`scripts/factory/providers/base.py`).
 - Produces: `flux_2_klein.status == "verified"` — снимает гейт трат для Runware-кадров.
 
-- [ ] **Шаг 1: Написать скрипт живой пробы**
+- [x] **Шаг 1: Написать скрипт живой пробы**
 
 Создать `spike/live_runware_image.py` (по образцу `spike/live_phase2_image.py`):
 
@@ -351,7 +399,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Шаг 2: Запустить**
+- [x] **Шаг 2: Запустить**
 
 ```bash
 .venv/Scripts/python.exe spike/live_runware_image.py
@@ -359,7 +407,7 @@ if __name__ == "__main__":
 
 Ожидание: печатается смета (~$0.008), затем `OK: spike/live_rw_flux_2_klein.png` с ненулевым размером. Ошибка `insufficientCredits` означает, что баланс не дошёл — остановиться и сказать пользователю. Ошибка про `architectureId` означает неверный AIR — сверить `modelSearch`, не гадать.
 
-- [ ] **Шаг 3: Проверить фактическое разрешение файла**
+- [x] **Шаг 3: Проверить фактическое разрешение файла**
 
 ```bash
 ffprobe -v error -show_entries stream=width,height,codec_name -of default=noprint_wrappers=1 spike/live_rw_flux_2_klein.png
@@ -367,7 +415,7 @@ ffprobe -v error -show_entries stream=width,height,codec_name -of default=noprin
 
 Записать вывод — он идёт в комментарий карточки. Если пришёл квадрат вместо 16:9 — Runware, как и WaveSpeed, игнорирует `resolution` в пользу другого поля; это вход в задачу 5, зафиксировать факт.
 
-- [ ] **Шаг 4: Обновить карточку**
+- [x] **Шаг 4: Обновить карточку**
 
 В `knowledge/images/flux_2_klein.md` заменить строку `status:` на (подставить реальные значения из шагов 2–3):
 
@@ -375,11 +423,11 @@ ffprobe -v error -show_entries stream=width,height,codec_name -of default=noprin
 status: verified          # Runware подтверждён живьём 2026-08-01 (runware:400@2, $X.XXX списано, файл WxH <формат>); WaveSpeed НЕ проверен
 ```
 
-- [ ] **Шаг 5: Дописать итог в контракт провайдера**
+- [x] **Шаг 5: Дописать итог в контракт провайдера**
 
 В конец `knowledge/runware-api.md` добавить раздел с датой, фактическим ответом `getResponse` (какие поля пришли, что было в `cost`), подтверждённой семантикой `status` и фактическим разрешением. Это закрывает оговорку из шапки файла «без живого спайка».
 
-- [ ] **Шаг 6: Тесты и коммит**
+- [x] **Шаг 6: Тесты и коммит**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q && git add knowledge/ && git commit -m "feat(knowledge): flux_2_klein verified на Runware живьём"
@@ -390,6 +438,27 @@ status: verified          # Runware подтверждён живьём 2026-08-
 ---
 
 ## Задача 5: Закрыть открытый вопрос Runware — `resolution` против `width`/`height`
+
+> **Статус: выполнено 2026-08-01, код и часть шагов слиты с Задачей 4.** Фикс сделан не
+> отдельным прогоном «сначала сломанный video, потом чиним» (Шаг 2, три исхода) —
+> `knowledge/runware-api.md` документирует только успешный video-прогон уже ПОСЛЕ
+> width/height-фикса; отдельного проваленного video-запроса на строке `resolution` в
+> контракте не зафиксировано (фикс обобщили с image, не передоказывали на video отдельно).
+> Реализация (`51f52b7`) вышла проще черновика Шага 5: вместо словаря `_WH` с тремя
+> разрешениями (480p/720p/1080p) и ветвления `is_image` — единый словарь `_RESOLUTIONS`
+> только с `"720p"` (1080p сознательно не замаплен: для FLUX.2 Klein 9B 1080 не кратно
+> шагу 16, единой пары px без искажения аспекта для обеих задач карточки нет — см.
+> комментарий в `scripts/factory/providers/runware.py:15-30`), и одна ветка кода вместо
+> `if is_image/else` — картинка и видео используют одну и ту же пару размеров. Тест вышел
+> под другим именем (`test_runware_video_submit_sends_width_height`, не
+> `test_runware_video_sends_width_height`, плюс отдельный `test_runware_image_submit_sends_width_height`,
+> которого план не предполагал вовсе, и `test_runware_aspect_ratio_9x16_swaps_dimensions`).
+> Сверх плана — Шаг 5 не упоминает: обнаружен и закрыт независимый баг `deliveryMethod`
+> (sync по умолчанию для image, async для video — `wait()` поллил уже закрытую задачу),
+> и добавлен гейт `preflight_problems` (`scripts/factory/providers/base.py`,
+> `generate_batch.py: _validation_gate`) — цена на незамапленный `resolution` (например
+> 1080p) теперь отбивается ДО сметы, а не только в `submit`. Итог по факту: `vidu_q2_turbo`
+> verified, файл 1284x716 (не ровно 1280x720 — Runware сам подгоняет размеры под модель).
 
 Открытый вопрос из `knowledge/runware-api.md`: часть видео-моделей Runware ждёт целочисленные `width`/`height`, а адаптер шлёт строку `resolution` (`runware.py:38-39`). Спайк 2026-06-17 до него не дошёл — баланс отбил раньше. Это ровно тот класс бага, что уже поймали на WaveSpeed (`resolution_style`): кадры молча выходят не того размера.
 
@@ -403,7 +472,7 @@ status: verified          # Runware подтверждён живьём 2026-08-
 - Consumes: `RunwareProvider.submit(model: str, params: dict) -> str`; `params` содержит `prompt`, `duration`, `resolution`, `start_frame`, `end_frame`, `tier`.
 - Produces: подтверждённый (или исправленный) контракт видео-сабмита Runware.
 
-- [ ] **Шаг 1: Написать скрипт живой пробы видео**
+- [x] **Шаг 1: Написать скрипт живой пробы видео**
 
 Создать `spike/live_runware_video.py`:
 
@@ -442,7 +511,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Шаг 2: Запустить и снять фактическое разрешение**
+- [x] **Шаг 2: Запустить и снять фактическое разрешение**
 
 ```bash
 .venv/Scripts/python.exe spike/live_runware_video.py
@@ -459,7 +528,7 @@ ffprobe -v error -show_entries stream=width,height -show_entries format=duration
 - **Файл пришёл, но не 1280x720** (например квадрат) → `resolution` молча игнорируется, идти в шаг 3.
 - **Файл 1280x720, длительность ~5с** → контракт верен, шаг 3 пропустить, идти в шаг 6.
 
-- [ ] **Шаг 3: Написать падающий тест на width/height**
+- [x] **Шаг 3: Написать падающий тест на width/height**
 
 Только если шаг 2 показал проблему. В `tests/test_providers.py` добавить сразу после `test_runware_submit` (фикстура `kdir` и хелпер `make` — уже в файле, новых не заводить):
 
@@ -481,7 +550,7 @@ def test_runware_video_sends_width_height(kdir, monkeypatch):
     assert "resolution" not in task
 ```
 
-- [ ] **Шаг 4: Убедиться, что тест падает**
+- [x] **Шаг 4: Убедиться, что тест падает**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_providers.py -k width_height -q
@@ -489,7 +558,7 @@ def test_runware_video_sends_width_height(kdir, monkeypatch):
 
 Ожидание: FAIL — `KeyError: 'width'`.
 
-- [ ] **Шаг 5: Реализовать**
+- [x] **Шаг 5: Реализовать**
 
 Только если шаг 2 доказал необходимость. В `scripts/factory/providers/runware.py` заменить блок строк 38-39:
 
@@ -521,7 +590,7 @@ def test_runware_video_sends_width_height(kdir, monkeypatch):
 _WH = {"480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
 ```
 
-- [ ] **Шаг 6: Прогнать тесты, обновить карточку и контракт**
+- [x] **Шаг 6: Прогнать тесты, обновить карточку и контракт**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q
@@ -529,7 +598,7 @@ _WH = {"480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
 
 В `knowledge/video/vidu_q2_turbo.md` — `status: verified` с датой, фактическим разрешением/длительностью и списанной суммой; в блоке `providers.runware` заменить комментарий «AIR-id подтвердить спайком» на факт. В `knowledge/runware-api.md` — заменить пункт «Часть видео-моделей требует width/height… Сверить по конкретной модели на спайке» на подтверждённый результат.
 
-- [ ] **Шаг 7: Коммит**
+- [x] **Шаг 7: Коммит**
 
 ```bash
 git add scripts/factory/providers/runware.py tests/test_providers.py knowledge/ && git commit -m "feat(runware): контракт видео подтверждён живьём, vidu_q2_turbo verified"
@@ -543,6 +612,19 @@ git add scripts/factory/providers/runware.py tests/test_providers.py knowledge/ 
 
 ## Задача 6: Живая проверка `seedance_2_0` и `seedance1_5` на WaveSpeed
 
+> **Статус: выполнено 2026-08-01, с находками сверх плана.** Обе модели verified,
+> изменения только в `knowledge/` — тесты не менялись (235 passed, без прироста). Цены
+> разошлись сильнее, чем предполагали ценники в описании задачи: `seedance_2_0` списал
+> $0.90 против оценки $0.50 (карточка занижала цену вдвое; пересчитана по формуле
+> каталога, а не по разовому наблюдению, чтобы смета впредь не занижала). Ещё одна
+> находка, которой не было в плане вообще: у `seedance_2_0` `native_audio` стояло
+> `false`, хотя живой файл пришёл с aac-дорожкой — поле было ошибкой карточки, исправлено
+> на `true`. `seedance1_5` списал $0.21 против оценки $0.20 — план на этом остановился бы,
+> но отдельный ревью-проход (коммит `d664a5c`, вне шагов этой задачи) нашёл, что
+> `usd_per_sec: 0.052` всё ещё давал смету МЕНЬШЕ факта — округлено вверх до `0.053`,
+> заодно уточнена формулировка занижения цены `seedance_2_0` в прозе карточки (~3.6x на
+> 1080p, а не «вдвое», как было написано после первого прохода).
+
 Последние два дефолта из FINAL-спеки в статусе `skeleton`. Ждут пополнения WaveSpeed (задача 2, шаг 2). Ценник по карточкам: `seedance_2_0` fast $0.10/с × 5с = **$0.50**; `seedance1_5` pro $0.05/с × 4с = **$0.20**.
 
 Отдельно: у `seedance1_5` сетка длительностей 4/8/12с и она **не совпадает** с отрезками конвейера 5/10с — карточка это прямо отмечает. Живая проба идёт на `duration: 4`, а несовпадение остаётся зафиксированным ограничением, не чинится здесь.
@@ -551,7 +633,7 @@ git add scripts/factory/providers/runware.py tests/test_providers.py knowledge/ 
 - Modify: `spike/live_phase2_video.py` (добавить кейсы — не коммитится)
 - Modify: `knowledge/video/seedance_2_0.md`, `knowledge/video/seedance1_5.md`
 
-- [ ] **Шаг 1: Проверить баланс перед тратой (бесплатно)**
+- [x] **Шаг 1: Проверить баланс перед тратой (бесплатно)**
 
 ```bash
 curl -s -H "Authorization: Bearer $WAVESPEED_API_KEY" https://api.wavespeed.ai/api/v3/balance
@@ -559,7 +641,7 @@ curl -s -H "Authorization: Bearer $WAVESPEED_API_KEY" https://api.wavespeed.ai/a
 
 Ожидание: остаток ≥ $0.80. Если меньше — остановиться, сказать пользователю, не пытаться генерировать.
 
-- [ ] **Шаг 2: Дописать кейсы в скрипт живых проб**
+- [x] **Шаг 2: Дописать кейсы в скрипт живых проб**
 
 В `spike/live_phase2_video.py` в словарь `CASES` добавить:
 
@@ -572,7 +654,7 @@ curl -s -H "Authorization: Bearer $WAVESPEED_API_KEY" https://api.wavespeed.ai/a
                     "start_frame": "spike/cat1.png", "end_frame": "spike/cat2.png"},
 ```
 
-- [ ] **Шаг 3: Запустить обе пробы**
+- [x] **Шаг 3: Запустить обе пробы**
 
 ```bash
 .venv/Scripts/python.exe spike/live_phase2_video.py seedance_2_0
@@ -584,7 +666,7 @@ curl -s -H "Authorization: Bearer $WAVESPEED_API_KEY" https://api.wavespeed.ai/a
 
 Ожидание: обе печатают смету, затем `OK: spike/live_p2_<model>.mp4`. Если WaveSpeed вернёт HTTP 400 про размер — проверить `resolution_style` в карточке (`size` / `k` / `omit`), это уже известный класс бага.
 
-- [ ] **Шаг 4: Снять факты по каждому файлу**
+- [x] **Шаг 4: Снять факты по каждому файлу**
 
 ```bash
 ffprobe -v error -show_entries stream=width,height -show_entries format=duration -of default=noprint_wrappers=1 spike/live_p2_seedance_2_0.mp4
@@ -592,11 +674,11 @@ ffprobe -v error -show_entries stream=width,height -show_entries format=duration
 
 То же для `seedance1_5`. Сверить списание с оценкой через `GET /api/v3/balance` до и после — цена, как показал случай vidu, может быть нелинейной.
 
-- [ ] **Шаг 5: Обновить обе карточки**
+- [x] **Шаг 5: Обновить обе карточки**
 
 `status: verified` с датой 2026-08-01, фактическим разрешением, длительностью и **фактически списанной** суммой. Если фактическая цена разошлась с `usd_per_sec` в блоке `providers` — поправить цену там же (проза карточки цен не дублирует).
 
-- [ ] **Шаг 6: Тесты и коммит**
+- [x] **Шаг 6: Тесты и коммит**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q && git add knowledge/video/ && git commit -m "feat(knowledge): seedance_2_0 и seedance1_5 verified на WaveSpeed живьём"
@@ -610,6 +692,20 @@ ffprobe -v error -show_entries stream=width,height -show_entries format=duration
 
 ## Задача 7: Калибровка дакинга
 
+> **Статус: выполнено 2026-08-01, входные варианты не те, что в тексте задачи.** Эта
+> задача (и текст выше) отсылает к прослушиванию 2026-07-09 и четырём вариантам
+> `A_current_thr005_r8_a20_rel300` / `B_deep_thr003_r12_a10_rel250` /
+> `C_gentle_thr01_r4_a50_rel500` / `D_noduck_reference` из `spike/duck_calib/`. По факту
+> калибровка 2026-08-01 (коммит `aa39b4a`) переслушала СЕМЬ новых вариантов (A–G + FINAL,
+> та же папка `spike/duck_calib`, но не те файлы, что перечислены здесь) — старые
+> A/B/C/D упомянуты в комментарии у константы не были. Выбранные параметры дальше от
+> Шага 2 плана (пример для «варианта B»: `threshold=0.03:ratio=12:attack=10:release=250`),
+> чем предполагалось: итог `threshold=0.01:ratio=20:attack=5:release=1150` — глубже
+> (максимальный `ratio`) и с намного более длинным `release` (1150 мс против 250) —
+> короткий `release` на прослушивании давал слышимое «дыхание» громкости между фразами.
+> Обоснование каждого параметра — в комментарии у `DUCK`, не только «выбор на слух» одной
+> строкой, как в примере Шага 2.
+
 `DUCK` в `scripts/mix_audio.py:33` — исходная заглушка `threshold=0.05:ratio=8:attack=20:release=300` с комментарием «параметры уточнить на smoke (Task 6)». Прослушивание 2026-07-09 состоялось: в `spike/duck_calib/` лежат варианты `A_current_thr005_r8_a20_rel300`, `B_deep_thr003_r12_a10_rel250`, `C_gentle_thr01_r4_a50_rel500`, `D_noduck_reference` плюс `DEMO1–6`. **Выводы нигде не записаны, константа не менялась.**
 
 **Files:**
@@ -618,7 +714,7 @@ ffprobe -v error -show_entries stream=width,height -show_entries format=duration
 **Interfaces:**
 - Produces: `DUCK` — строка фильтра ffmpeg `sidechaincompress`, потребляется сборкой фильтр-графа в том же файле. Формат строки не меняется, меняются только числа.
 
-- [ ] **Шаг 1: Спросить пользователя, какой вариант выбран**
+- [x] **Шаг 1: Спросить пользователя, какой вариант выбран**
 
 Это решение на слух, агент его принять не может. Если пользователь не помнит итогов прослушивания 2026-07-09 — переслушать:
 
@@ -628,7 +724,7 @@ start spike/duck_calib/A_current_thr005_r8_a20_rel300.m4a
 
 (и так же B, C, D — `D_noduck_reference` как база сравнения). Вопрос ставить конкретно: «в каком варианте музыка уходит под реплику достаточно, но не проваливается?»
 
-- [ ] **Шаг 2: Вписать выбранные параметры с обоснованием**
+- [x] **Шаг 2: Вписать выбранные параметры с обоснованием**
 
 Заменить строки 32-33 `scripts/mix_audio.py` (числа — из выбранного варианта; ниже пример для B):
 
@@ -641,7 +737,7 @@ start spike/duck_calib/A_current_thr005_r8_a20_rel300.m4a
 DUCK = "sidechaincompress=threshold=0.03:ratio=12:attack=10:release=250"
 ```
 
-- [ ] **Шаг 3: Прогнать тесты монтажа**
+- [x] **Шаг 3: Прогнать тесты монтажа**
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_mix_audio.py -q
@@ -649,7 +745,7 @@ DUCK = "sidechaincompress=threshold=0.03:ratio=12:attack=10:release=250"
 
 Ожидание: все тесты файла зелёные (они проверяют структуру фильтр-графа, не числа).
 
-- [ ] **Шаг 4: Смок на реальном материале**
+- [x] **Шаг 4: Смок на реальном материале**
 
 ```bash
 .\.venv\Scripts\python.exe scripts/mix_audio.py --project projects/_smoke --episode ep01
@@ -657,7 +753,7 @@ DUCK = "sidechaincompress=threshold=0.03:ratio=12:attack=10:release=250"
 
 Ожидание: exit 0, файл `projects/_smoke/episodes/ep01/audio/mix.m4a` перезаписан. Прослушать, подтвердить у пользователя.
 
-- [ ] **Шаг 5: Коммит**
+- [x] **Шаг 5: Коммит**
 
 ```bash
 git add scripts/mix_audio.py && git commit -m "feat(mix): калибровка дакинга по прослушиванию 2026-07-09"
@@ -667,12 +763,16 @@ git add scripts/mix_audio.py && git commit -m "feat(mix): калибровка �
 
 ## Задача 8: Зафиксировать решение по нормализации разрешения в сборке
 
+> **Статус: выполнено 2026-08-01**, как рекомендовано планом (коммит `790908d`) —
+> пользователь согласился оставить как есть для v1. Формулировка в докстроке
+> `assemble.py` совпадает с текстом Шага 1 почти дословно.
+
 `scripts/assemble.py:9-10`: «при разных разрешениях отрезков ffmpeg упадёт с понятной ошибкой — допустимо для v1». Роадмап требует решение зафиксировать: либо чинить, либо осознанно отложить с пометкой.
 
 **Files:**
 - Modify: `scripts/assemble.py:9-10` (докстрока) **или** `CLAUDE.md`
 
-- [ ] **Шаг 1: Спросить пользователя и зафиксировать**
+- [x] **Шаг 1: Спросить пользователя и зафиксировать**
 
 Рекомендация: **оставить как есть для v1**. Разрешение задаётся в `project.json` на весь проект, разные разрешения внутри эпизода означают ошибку конфигурации, и падение ffmpeg с внятной ошибкой честнее молчаливого апскейла. Если пользователь согласен — заменить в докстроке `assemble.py` фразу «допустимо для v1» на явное решение с датой:
 
@@ -685,7 +785,7 @@ git add scripts/mix_audio.py && git commit -m "feat(mix): калибровка �
 
 Если пользователь хочет нормализацию — это отдельная задача с `scale`/`pad` в фильтр-графе, в этот план она не входит.
 
-- [ ] **Шаг 2: Коммит**
+- [x] **Шаг 2: Коммит**
 
 ```bash
 git add scripts/assemble.py && git commit -m "docs(assemble): зафиксировано решение не нормализовать разрешение в v1"
@@ -700,6 +800,11 @@ git add scripts/assemble.py && git commit -m "docs(assemble): зафиксиро
 Здесь плана кода **нет и не должно быть**. Роадмап прямо запрещает писать код Фазы 4 без прохода `superpowers:brainstorming` → `superpowers:writing-plans`: контракт ElevenLabs не исследован (в `knowledge/` его нет вообще), а провайдер SFX и музыки **не выбран** — Higgsfield вырезан, замены нет. Это открытый дизайн-вопрос, а не деталь реализации.
 
 ## Задача 9: Зафиксировать выводы аудио-проб 2026-07-09
+
+> **Статус: ОТЛОЖЕНО пользователем 2026-08-01.** Не выполнялась — переслушивание проб не
+> состоялось, `docs/superpowers/plans/2026-08-01-audio-findings.md` не создан. Это
+> сознательный долг, а не пропуск: Фаза 4 отложена целиком (см. пометку выше и в
+> `2026-07-08-roadmap-next-steps.md`), TTS/SFX/музыка остаются без вердикта.
 
 В `spike/duck_calib/voices/` и `voices_design/` лежат пробы TTS (qwen_tts, minimax `lovely_girl` / `russian_handsomechil`, дизайнерские голоса `boy_hero` / `narrator` / `sidekick`), в `spike/duck_calib/` — `audio_mirelo_v2a.wav`, `audio_mmaudio.mp4`, `audio_sonilo_music.mp3`. Выводы не записаны нигде. Это вход в brainstorming Фазы 4 — без письменной фиксации он начнётся с нуля.
 
@@ -723,6 +828,11 @@ git add docs/superpowers/plans/2026-08-01-audio-findings.md && git commit -m "do
 
 ## Задача 10: Вход в brainstorming Фазы 4
 
+> **Статус: ОТЛОЖЕНО пользователем 2026-08-01.** Не выполнялась (зависит от Задачи 9).
+> `superpowers:brainstorming` по звуку не запускался, TDD-план Фазы 4 не написан.
+> Условие роадмапа «не писать код Фазы 4 без brainstorming → writing-plans» остаётся
+> в силе — начинать здесь, когда пользователь вернётся к звуку.
+
 - [ ] **Шаг 1: Запустить `superpowers:brainstorming`**
 
 На вход: `2026-08-01-audio-findings.md`, роадмап §Фаза 4, базовая спека §11 (звук). Решить: объём первого захода (только TTS или сразу TTS+SFX+музыка), провайдер по каждому типу, как аудио-стадия возвращается в `generate_batch.py`, что делать с историческими карточками `knowledge/audio/*` (остаются как референс формата или удаляются).
@@ -737,20 +847,30 @@ git add docs/superpowers/plans/2026-08-01-audio-findings.md && git commit -m "do
 
 ## Задача 11: Актуализация документации и графа
 
+> **Статус: частично выполнено 2026-08-01.** Шаги 1–3 сделаны этой правкой. Мандат этого
+> прохода (отдельные инструкции задачи 11) явно ограничил объём до трёх файлов —
+> `README.md`, `CLAUDE.md`, два файла в `docs/superpowers/plans/` — и явно запретил
+> трогать код/тесты. Из-за этого Шаг 4 (`/understand`, пересборка knowledge-graph) и
+> Шаг 5 (финальный `pytest` + `git push origin master`) НЕ выполнены в рамках этого
+> прохода — они вне выданного мандата, не забыты. Тесты прогнаны отдельно вне Шага 5
+> (см. отчёт задачи 11): 235 passed, не 223, как ожидал этот шаг (223 — счётчик на
+> момент написания плана, до Задач 4–6). Граф остаётся не пересобранным — открытый долг,
+> граф-первый процесс работает по устаревшему графу, пока `/understand` не будет запущен.
+
 **Files:**
 - Modify: `README.md` (раздел «Ограничения»)
 - Modify: `CLAUDE.md`
 - Modify: `docs/superpowers/plans/2026-07-08-roadmap-next-steps.md`
 
-- [ ] **Шаг 1: Починить README**
+- [x] **Шаг 1: Починить README**
 
 Раздел «Ограничения» врёт после мержа. Убрать пункт «В `master` все карточки кадров и отрезков имеют `status: skeleton`… лежат в ветке `spike/provider-verification` и ещё не слиты» — заменить на актуальный список verified-моделей. Пункт про Runware («не проверен живьём») убрать после задачи 5. Пункт про звук и про ручной путь «бриф → shots.json» оставить — они всё ещё верны.
 
-- [ ] **Шаг 2: Дополнить CLAUDE.md**
+- [x] **Шаг 2: Дополнить CLAUDE.md**
 
 Добавить в «Правила» пункт про `ensure_png` (кадры нормализуются в настоящий PNG после скачивания — расширение не врёт) и, если задача 8 закрыта отказом от нормализации, пункт про разрешение отрезков.
 
-- [ ] **Шаг 3: Отметить закрытые фазы в роадмапе**
+- [x] **Шаг 3: Отметить закрытые фазы в роадмапе**
 
 В `2026-07-08-roadmap-next-steps.md` проставить статус по каждой фазе с датой закрытия и ссылкой на этот план. Не удалять текст фаз — роадмап читается как журнал.
 
@@ -762,6 +882,9 @@ git add docs/superpowers/plans/2026-08-01-audio-findings.md && git commit -m "do
 
 Инкрементальный прогон подхватит новый `ensure_png`, изменённый `runware.py` и новый тест-файл. Граф — основа граф-первого процесса, устаревший граф хуже отсутствующего.
 
+НЕ выполнено в этом проходе — вне мандата задачи 11 этой итерации (см. пометку статуса
+выше). Остаётся долгом.
+
 - [ ] **Шаг 5: Финальная проверка и пуш**
 
 ```bash
@@ -769,6 +892,10 @@ git add docs/superpowers/plans/2026-08-01-audio-findings.md && git commit -m "do
 ```
 
 Ожидание: 223 passed, рабочее дерево чистое.
+
+НЕ выполнено в этом проходе — push вне мандата задачи 11 этой итерации. Тесты 235
+passed прогнаны отдельно (см. пометку статуса выше), рабочее дерево на момент запуска
+было чистым, но после этой правки содержит незакоммиченные изменения в трёх файлах.
 
 ---
 
