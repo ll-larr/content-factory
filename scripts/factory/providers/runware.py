@@ -44,6 +44,16 @@ class RunwareProvider(BaseHTTPProvider):
     name = "runware"
     api_key_env = "RUNWARE_API_KEY"
 
+    def preflight_problems(self, model: str, params: dict) -> list[str]:
+        """Разрешение вне _RESOLUTIONS ловим ДО сметы, а не в submit — иначе
+        пользователь видит подтверждённую цену и весь батч падает в fail
+        (ревью-находка: смета не должна обещать то, что submit не выполнит)."""
+        resolution = params.get("resolution")
+        if resolution and resolution not in _RESOLUTIONS:
+            return [f"Runware: неизвестное resolution {resolution!r}; "
+                    f"замаплены только {sorted(_RESOLUTIONS)}"]
+        return []
+
     def submit(self, model: str, params: dict) -> str:
         card = self._card(model)
         air = self._concrete_id(card, params.get("tier"))  # напр. bytedance:seedance@2.0

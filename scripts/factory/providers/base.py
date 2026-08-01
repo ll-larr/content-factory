@@ -29,6 +29,7 @@ class VideoProvider(Protocol):
     """Поверхность, унаследованная от Higgsfield-адаптера (FINAL §5.1)."""
     unit: str
 
+    def preflight_problems(self, model: str, params: dict) -> list[str]: ...
     def estimate(self, model: str, params: dict) -> float: ...
     def submit(self, model: str, params: dict) -> str: ...
     def poll(self, job_id: str) -> dict: ...
@@ -123,6 +124,17 @@ class BaseHTTPProvider:
         urllib.request.urlretrieve(url, dest)
 
     # ---- общая поверхность ----
+    def preflight_problems(self, model: str, params: dict) -> list[str]:
+        """Хук: проверка параметров вызова ДО сметы и трат (ревью-находка:
+        смета не должна обещать цену, которую submit не может выполнить).
+
+        Специфика провайдера (какие resolution/тиры/etc он реально умеет)
+        живёт ТОЛЬКО в адаптере — правило изоляции провайдера (CLAUDE.md).
+        По умолчанию проверять нечего — пустой список; переопределяется в
+        адаптере, знающем свои ограничения (см. RunwareProvider).
+        """
+        return []
+
     def estimate(self, model: str, params: dict) -> float:
         card = self._card(model)
         return estimate_media_cost(

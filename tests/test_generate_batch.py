@@ -82,6 +82,10 @@ class FakeProvider:
         self.submitted = []
         self.estimates = []
 
+    def preflight_problems(self, model, params):
+        """По умолчанию у фейка нечего проверять — как и у BaseHTTPProvider."""
+        return []
+
     def estimate(self, model, params):
         self.estimates.append((model, params))
         return 0.5
@@ -229,6 +233,39 @@ def test_model_not_on_provider_blocks_segments(proj, monkeypatch, capsys):
     (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
     assert run(proj, "segments") == 2
     assert "runware" in capsys.readouterr().out
+
+
+def test_provider_preflight_blocks_segments_before_estimate(proj, monkeypatch, capsys):
+    """Ревью-находка 1: смета не должна обещать цену, которую submit не может
+    выполнить (напр. Runware не умеет разрешение проекта). Хук провайдера
+    preflight_problems проверяется ДО сметы — до провайдера дело не доходит:
+    estimate() не считается, submit() не вызывается, код возврата 2 — тот же
+    путь, каким уже отбиваются карточки, не прошедшие валидацию."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(
+        fp, "preflight_problems",
+        lambda model, params: [f"{model}: неизвестное resolution {params.get('resolution')!r}"])
+    assert run(proj, "segments") == 2
+    assert fp.estimates == []
+    assert fp.submitted == []
+    out = capsys.readouterr().out
+    assert "НЕ ПРОШЛА ВАЛИДАЦИЮ" in out
+    assert "seedance_2_0" in out
+
+
+def test_provider_preflight_blocks_storyboard_before_estimate(proj, monkeypatch, capsys):
+    """Симметрично сегментам: preflight-хук провайдера блокирует раскадровку
+    ДО сметы, тем же кодом 2 и тем же форматом вывода."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(
+        fp, "preflight_problems",
+        lambda model, params: [f"{model}: неизвестное resolution {params.get('resolution')!r}"])
+    assert run(proj, "storyboard") == 2
+    assert fp.estimates == []
+    assert fp.submitted == []
+    out = capsys.readouterr().out
+    assert "НЕ ПРОШЛА ВАЛИДАЦИЮ" in out
+    assert "z_image" in out
 
 
 def test_provider_error_returns_to_pending(proj, monkeypatch):

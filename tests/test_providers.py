@@ -202,7 +202,16 @@ def test_runware_video_submit_sends_width_height(kdir, monkeypatch):
 
 
 def test_runware_image_submit_sends_width_height(tmp_path, monkeypatch):
-    """Image 720p идёт тем же путём: width/height, а не строка resolution."""
+    """Image 720p идёт тем же путём: width/height, а не строка resolution.
+
+    Заодно закрываем deliveryMethod=async именно на IMAGE-задаче: у Runware
+    deliveryMethod по умолчанию РАЗНЫЙ (sync для imageInference, async для
+    videoInference), и живой баг ломался именно на image — sync-ответ приходил
+    прямо в ответ на submit, getResponse потом был пуст, wait() поллил до
+    таймаута (см. test_runware_submit_requests_async_delivery — тот тест
+    сабмитит video-карточку и этот путь не покрывает). Расширяем существующий
+    image-тест вместо отдельного: сетап (image-карточка, фейковый _request)
+    уже тут, дублировать его ради одного assert не нужно."""
     p = _rw_image_provider(tmp_path)
     captured = {}
 
@@ -216,6 +225,7 @@ def test_runware_image_submit_sends_width_height(tmp_path, monkeypatch):
     assert task["taskType"] == "imageInference"
     assert task["width"] == 1280 and task["height"] == 720
     assert "resolution" not in task
+    assert task["deliveryMethod"] == "async"
 
 
 def test_runware_aspect_ratio_9x16_swaps_dimensions(kdir, monkeypatch):
@@ -241,6 +251,30 @@ def test_runware_unknown_resolution_raises(kdir):
     with pytest.raises(ProviderError, match="resolution"):
         p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "resolution": "1080p",
                                   "start_frame": "http://x/a.png"})
+
+
+def test_runware_preflight_problems_unknown_resolution(kdir):
+    """Ревью-находка 1: смета не должна обещать цену, которую submit не может
+    выполнить. preflight_problems — хук из BaseHTTPProvider (провайдеро-
+    независимый протокол), переопределённый здесь; generate_batch.py вызывает
+    его ДО сметы. В тестах generate_batch.py (test_generate_batch.py) хук
+    монокпатчится на FakeProvider, так что реальную реализацию проверяем
+    отдельно — здесь."""
+    p = make("runware", kdir)
+    problems = p.preflight_problems("seedance_2_0", {"resolution": "1080p"})
+    assert problems
+    assert "1080p" in problems[0]
+
+
+def test_runware_preflight_problems_known_resolution_ok(kdir):
+    p = make("runware", kdir)
+    assert p.preflight_problems("seedance_2_0", {"resolution": "720p"}) == []
+
+
+def test_runware_preflight_problems_no_resolution_ok(kdir):
+    """Без resolution в params — проверять нечего (напр. смета без него же не падает)."""
+    p = make("runware", kdir)
+    assert p.preflight_problems("seedance_2_0", {}) == []
 
 
 def test_runware_submit_requests_async_delivery(kdir, monkeypatch):
