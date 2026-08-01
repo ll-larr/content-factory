@@ -62,9 +62,13 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 def ensure_png(path: Path) -> Path:
     """Гарантировать, что файл с именем *.png действительно PNG.
 
-    WaveSpeed на image-моделях отдаёт JPEG, а конвейер хранит кадры под именем
-    NNN.png — конвенция путей (factory.shots.frame_path), на неё ссылаются refs
-    в shots.json. Имя менять нельзя, поэтому нормализуем содержимое.
+    Провайдер может отдать не-PNG (например JPEG) под именем NNN.png — конвенция
+    путей (factory.shots.frame_path), на неё ссылаются refs в shots.json. Имя
+    менять нельзя, поэтому нормализуем содержимое.
+
+    Если конвертация не удалась, исходные байты возвращаются на path нетронутыми
+    (скачанный, уже оплаченный кадр не должен теряться), а FfmpegError
+    пробрасывается дальше вызывающему.
     """
     path = Path(path)
     if path.read_bytes()[:8] == PNG_MAGIC:
@@ -73,6 +77,8 @@ def ensure_png(path: Path) -> Path:
     os.replace(path, src)
     try:
         run_ffmpeg(["-i", str(src), str(path)])
-    finally:
-        src.unlink(missing_ok=True)
+    except Exception:
+        os.replace(src, path)
+        raise
+    src.unlink(missing_ok=True)
     return path

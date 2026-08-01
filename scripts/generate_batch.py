@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory.ffmpeg_tools import ensure_png
+from factory.ffmpeg_tools import FfmpegError, ensure_png
 from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
@@ -211,9 +211,10 @@ def main(argv=None) -> int:
                 j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
-        except ProviderError as e:
-            # технический сбой -> вернуть в очередь (спека §13);
-            # если job_id известен — сохраняем для соотнесения с логами провайдера
+        except (ProviderError, FfmpegError) as e:
+            # технический сбой (провайдер или конвертация ensure_png) -> вернуть
+            # в очередь (спека §13); если job_id известен — сохраняем для
+            # соотнесения с логами провайдера
             extra = {"job_id": job_id} if job_id is not None else {}
             manifest.set_status(j["item_id"], "pending", **extra)
             print(f"  ! {j['item_id']}: {e}")

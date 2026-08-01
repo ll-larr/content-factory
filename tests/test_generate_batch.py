@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import generate_batch as gb
+from factory.ffmpeg_tools import FfmpegError
 from factory.manifest import Manifest
 from factory.providers.base import ProviderError
 
@@ -424,6 +425,28 @@ def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
     m.save()
     assert run(proj, "segments") == 3
     assert "статус rejected" in capsys.readouterr().out
+
+
+def test_ffmpeg_error_returns_to_pending_and_batch_continues(proj, monkeypatch):
+    """FfmpegError (сбой ensure_png, например неконвертируемые байты) — тот же
+    технический сбой, что ProviderError (спека §13): item -> pending, счётчик
+    fail растёт, а батч не прерывается — остальные элементы обрабатываются."""
+    fp = fake_provider(monkeypatch)
+    real_ensure_png = gb.ensure_png
+
+    def flaky_ensure_png(path):
+        if Path(path).name == "001.png":
+            raise FfmpegError("ffmpeg упал")
+        return real_ensure_png(path)
+
+    monkeypatch.setattr(gb, "ensure_png", flaky_ensure_png)
+    assert run(proj, "storyboard") == 1
+    assert len(fp.submitted) == 3  # батч не прервался — 002 и 003 тоже дошли
+
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["status"] == "pending"
+    assert m.get("ep01/storyboard/002")["status"] == "generated"
+    assert m.get("ep01/storyboard/003")["status"] == "generated"
 
 
 def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
