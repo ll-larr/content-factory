@@ -159,6 +159,108 @@ def test_runware_submit(kdir, monkeypatch):
     assert job == task["taskUUID"]
 
 
+# --- Спайк 2026-08-01: Runware отклоняет строку resolution (missingDimensionParameters) —
+# imageInference/videoInference хотят целочисленные width/height. Контракт и таблица
+# размеров — knowledge/runware-api.md и scripts/factory/providers/runware.py.
+
+RW_IMAGE_CARD = """---
+id: flux_2_klein_test
+type: image
+status: verified
+providers:
+  runware:
+    id: "runware:400@2"
+    pricing: flat
+    usd_per_image: 0.008
+---
+# flux test
+"""
+
+
+def _rw_image_provider(tmp_path):
+    d = tmp_path / "knowledge" / "images"
+    d.mkdir(parents=True)
+    (d / "flux_2_klein_test.md").write_text(RW_IMAGE_CARD, encoding="utf-8")
+    return RunwareProvider(knowledge_dir=tmp_path / "knowledge")
+
+
+def test_runware_video_submit_sends_width_height(kdir, monkeypatch):
+    """Видео 720p -> целочисленные width/height в теле, строка resolution не улетает."""
+    captured = {}
+
+    def fake_request(method, url, json_body=None):
+        captured.update(body=json_body)
+        return {"data": [{"taskUUID": json_body[0]["taskUUID"]}]}
+
+    p = make("runware", kdir)
+    monkeypatch.setattr(p, "_request", fake_request)
+    p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "resolution": "720p",
+                              "start_frame": "http://x/a.png"})
+    task = captured["body"][0]
+    assert task["width"] == 1280 and task["height"] == 720
+    assert "resolution" not in task
+
+
+def test_runware_image_submit_sends_width_height(tmp_path, monkeypatch):
+    """Image 720p идёт тем же путём: width/height, а не строка resolution."""
+    p = _rw_image_provider(tmp_path)
+    captured = {}
+
+    def fake_request(method, url, json_body=None):
+        captured.update(body=json_body)
+        return {"data": [{"taskUUID": json_body[0]["taskUUID"]}]}
+
+    monkeypatch.setattr(p, "_request", fake_request)
+    p.submit("flux_2_klein_test", {"prompt": "m", "resolution": "720p"})
+    task = captured["body"][0]
+    assert task["taskType"] == "imageInference"
+    assert task["width"] == 1280 and task["height"] == 720
+    assert "resolution" not in task
+
+
+def test_runware_aspect_ratio_9x16_swaps_dimensions(kdir, monkeypatch):
+    """aspect_ratio: 9:16 переставляет width/height местами (портрет)."""
+    captured = {}
+
+    def fake_request(method, url, json_body=None):
+        captured.update(body=json_body)
+        return {"data": [{"taskUUID": json_body[0]["taskUUID"]}]}
+
+    p = make("runware", kdir)
+    monkeypatch.setattr(p, "_request", fake_request)
+    p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "resolution": "720p",
+                              "aspect_ratio": "9:16", "start_frame": "http://x/a.png"})
+    task = captured["body"][0]
+    assert task["width"] == 720 and task["height"] == 1280
+
+
+def test_runware_unknown_resolution_raises(kdir):
+    """1080p пока не замаплен на конкретные px (см. комментарий у _RESOLUTIONS) —
+    явная ошибка ДО сети, а не тихая порча тела запроса."""
+    p = make("runware", kdir)
+    with pytest.raises(ProviderError, match="resolution"):
+        p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "resolution": "1080p",
+                                  "start_frame": "http://x/a.png"})
+
+
+def test_runware_submit_requests_async_delivery(kdir, monkeypatch):
+    """deliveryMethod у Runware по умолчанию РАЗНЫЙ: sync для imageInference,
+    async для videoInference. При sync результат приходит прямо в ответ на сабмит,
+    задача закрывается, и getResponse по ней пуст — цикл wait() поллит до таймаута
+    (наблюдалось живьём 2026-08-01). Просим async явно для обоих типов."""
+    captured = {}
+
+    def fake_request(method, url, json_body=None):
+        captured.update(body=json_body)
+        return {"data": [{"taskUUID": json_body[0]["taskUUID"]}]}
+
+    p = make("runware", kdir)
+    monkeypatch.setattr(p, "_request", fake_request)
+    p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "resolution": "720p",
+                              "start_frame": "http://x/a.png"})
+    assert captured["body"][0]["deliveryMethod"] == "async"
+
+
 def test_openrouter_submit(kdir, monkeypatch):
     captured = {}
 

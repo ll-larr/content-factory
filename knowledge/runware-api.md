@@ -122,3 +122,69 @@
   документации, без живого подтверждения.
 - **Деньги:** $0 списано — Runware отклоняет запрос до создания задачи, счёт не
   выставляется (баланс, пополненный 2026-08-01, спайком не тронут).
+
+## Спайк 2026-08-01 (продолжение) — happy-path закрыт, `deliveryMethod` обязателен
+
+После добавления `width`/`height` сабмит проходит, но обнаружилась вторая причина, по
+которой цикл `submit → wait → download` не работал: **`deliveryMethod` у Runware разный
+по умолчанию для разных типов задач** — `sync` для `imageInference`, `async` для
+`videoInference` (docs `platform/python`, `models/vidu-q2-turbo`). При `sync` результат
+приходит ПРЯМО в ответ на сабмит, задача закрывается, и последующий `getResponse` по её
+`taskUUID` не возвращает ничего — адаптер поллил до таймаута уже завершённую задачу.
+
+Сырой сабмит `imageInference` без `deliveryMethod` (подтверждение sync-поведения):
+
+```json
+{"data":[{"taskType":"imageInference","imageUUID":"ea228e89-…","taskUUID":"4beb00c2-…",
+          "cost":0.00078,"seed":1478706282,
+          "imageURL":"https://im.runware.ai/image/os/…/ea228e89-….jpg"}]}
+```
+
+**Решение адаптера:** `RunwareProvider.submit` шлёт `"deliveryMethod": "async"` для обеих
+задач — одна ветка кода вместо двух, ответ на сабмит становится подтверждением, результат
+всегда забирается через `getResponse`.
+
+### Подтверждённый happy-path `getResponse`
+
+Image (`flux_2_klein` = `runware:400@2`, 1280x720):
+
+```json
+{"data":[{"taskUUID":"52f41967-…","taskType":"imageInference","status":"success",
+          "imageUUID":"12e9befd-…","cost":0.00169,"seed":1390191274,
+          "imageURL":"https://im.runware.ai/image/os/…/12e9befd-….jpg"}]}
+```
+
+Video (`vidu_q2_turbo` = `vidu:3@2`, 5с, 1280x720, `frameImages` first/last):
+
+```json
+{"data":[{"taskUUID":"f1ea033a-…","taskType":"videoInference","status":"success",
+          "videoUUID":"36e2d791-…","cost":0.11,"seed":1259273673,
+          "videoURL":"https://vm.runware.ai/video/os/…/36e2d791-….mp4"}]}
+```
+
+- **Семантика `status`:** `processing` — не готово (поле `progress` — проценты),
+  `success` — терминальный успех, `error` — терминальный провал (плюс массив `errors`).
+  Наш `_status` нормализует наличие `imageURL`/`videoURL` в `completed` и этим покрывает
+  `success`; `error` попадает в `_FAILED` базового слоя.
+- **`cost`** приходит в ответе при `includeCost: true` — это источник правды по цене,
+  прозой в карточках он не дублируется.
+
+### Ограничения размеров (подтверждено докой + живьём)
+
+- `width`/`height` — целые, ОБЯЗАТЕЛЬНЫ и для image, и для video (строка `resolution`
+  не принимается вообще). Альтернатива для image — `referenceImages`.
+- FLUX.2 [klein] 9B: диапазон 128–2048, **шаг 16** (`runware.ai/docs/models/bfl-flux-2-klein-9b`).
+  1280x720 валидно (оба кратны 16), файл вышел ровно 1280x720 MJPEG.
+- Vidu Q2 Turbo: 1280x720 принято, но файл вернулся **1284x716** — модель подгоняет
+  размеры под себя. Это нормально; жёстко полагаться на запрошенные px нельзя.
+- **1080p намеренно не замаплен**: 1080 не кратно 16, валидной пары без искажения
+  соотношения сторон нет, а видео-модели своих ограничений в доках не декларируют.
+  Адаптер на незамапленном `resolution` падает явной ошибкой до сети, а не шлёт
+  непроверенные px (`_RESOLUTIONS` в `scripts/factory/providers/runware.py`).
+
+### Деньги
+
+Некорректный сабмит (`missingDimensionParameters`) отклоняется ДО создания задачи и
+**не тарифицируется** — подбирать параметры можно бесплатно. Платятся только реально
+созданные задачи. Наблюдённые цены: image 1280x720 — $0.00078 и $0.00169 (две
+генерации, разброс есть); video 5с 720p — $0.11.
