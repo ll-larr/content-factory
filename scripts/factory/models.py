@@ -133,8 +133,11 @@ def estimate_media_cost(card: dict, provider: str, resolution: str,
     - image / ``usd_per_image`` → плоская цена за изображение (разрешение/длительность
       не влияют);
     - video ``pricing: flat`` → ``usd_per_sec × duration_sec`` (от разрешения не зависит);
-    - video ``pricing: scaled`` → ``usd_per_sec(720p) × duration_sec × res_mult[resolution]``
-      (×1.4 WaveSpeed, ×2.25 OpenRouter/Runware).
+    - video ``pricing: scaled`` → ``usd_per_sec(720p) × duration_sec × res_mult[resolution]``.
+      Множитель разрешения задаётся В КАРТОЧКЕ и у каждой модели свой: единого
+      «×1.4 у WaveSpeed» нет — живые пробы 2026-08-01 дали 2.5 у seedance_2_0 и
+      2.0 у seedance1_5 на том же провайдере. Источник — формула из каталога
+      провайдера, не общее правило.
 
     Тир (``fast``/``std``/``pro``) выбирает запись из ``providers[p].tiers``;
     по умолчанию — ``default_tier``.

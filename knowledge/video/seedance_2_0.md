@@ -16,20 +16,35 @@ providers:
     tiers:
       fast: { id: "bytedance/seedance-2.0-fast/image-to-video", usd_per_sec: 0.20 }  # реальный path (/api/v3/models 2026-06-17); цена по формуле каталога 500000*2*duration/5 → $1.00 за 5с 720p = $0.20/с. Живьём 2026-08-01 списано $0.90 за 5с (на 10% меньше формулы) — берём формулу, чтобы смета не занижала. Прежние $0.10/с занижали вдвое
     default_tier: fast
-  runware:                # $0.13/$0.29 (×2.25)
-    supports_start_end: true
-    pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 2.25}
-    tiers:
-      fast: { id: "bytedance:seedance@2.0", usd_per_sec: 0.13 }
-    default_tier: fast
-  openrouter:             # id ✓; ⚠️ только 480p/720p; ⚠️ цена ТОКЕННАЯ (video_tokens), usd_per_sec НЕВЕРНА — сверить
-    supports_start_end: true
-    pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 2.25}
-    tiers:
-      std: { id: "bytedance/seedance-2.0-fast", usd_per_sec: 0.151 }
-    default_tier: std
+  # ⚠️ Блоки runware и openrouter ОТКЛЮЧЕНЫ (закомментированы) 2026-08-01.
+  # Причина: гейт трат карточного уровня — validate_video_model смотрит на общий
+  # status карточки, не на конкретного провайдера. Пока карточка была skeleton,
+  # это никого не пускало. После того как WaveSpeed подтверждён живьём и статус
+  # стал verified, эти два блока тоже стали «разрешёнными к тратам» — при том что
+  # цена в них НЕ подтверждена, а у openrouter прямо помечена как неверная
+  # (тарификация токенная, наша модель flat/scaled её не выражает). Живая проба
+  # WaveSpeed показала, что догадка по цене занижала вдвое — доверия к соседним
+  # догадкам это не добавляет.
+  # Пока блок закомментирован, validate_video_model отдаёт «not available on
+  # provider» и generate_batch выходит кодом 2 — трат не будет. Раскомментировать
+  # по одному, после живой генерации на этом провайдере, вместе с фактической ценой.
+  #
+  # runware:                # $0.13/$0.29 (×2.25) — ДОГАДКА, живьём не проверена
+  #   supports_start_end: true
+  #   pricing: scaled
+  #   res_mult: {720p: 1.0, 1080p: 2.25}
+  #   tiers:
+  #     fast: { id: "bytedance:seedance@2.0", usd_per_sec: 0.13 }   # AIR реальный (modelSearch 2026-06-17), цена — нет
+  #   default_tier: fast
+  # openrouter:             # id ✓ (GET /videos/models); ⚠️ только 480p/720p;
+  #                         # ⚠️ цена ТОКЕННАЯ (video_tokens) — usd_per_sec НЕВЕРЕН в принципе,
+  #                         #    наша модель flat/scaled токенную тарификацию не выражает
+  #   supports_start_end: true
+  #   pricing: scaled
+  #   res_mult: {720p: 1.0, 1080p: 2.25}
+  #   tiers:
+  #     std: { id: "bytedance/seedance-2.0-fast", usd_per_sec: 0.151 }
+  #   default_tier: std
 ---
 
 # Seedance 2.0 — качественная видеомодель (универсал: реализм + научпоп + 3D)
