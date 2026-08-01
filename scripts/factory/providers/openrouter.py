@@ -6,6 +6,8 @@ Vidu и генерация изображений на OpenRouter не подд�
 """
 from __future__ import annotations
 
+import urllib.request
+
 from factory.providers.base import BaseHTTPProvider, ProviderError
 
 _BASE = "https://openrouter.ai/api/v1/videos"
@@ -66,3 +68,13 @@ class OpenRouterProvider(BaseHTTPProvider):
     def _result_url(self, result: dict) -> str:
         urls = result.get("unsigned_urls") or []
         return urls[0] if urls else ""
+
+    def _download_file(self, url: str, dest: str) -> None:
+        """unsigned_urls указывают на api/v1/videos/<id>/content и ТРЕБУЮТ Bearer
+        (в отличие от CDN-ссылок WaveSpeed/Runware) — без него HTTP 401."""
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {self._key()}"})
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = resp.read()
+        with open(dest, "wb") as f:
+            f.write(data)

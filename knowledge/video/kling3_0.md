@@ -2,7 +2,7 @@
 id: kling3_0
 type: video
 family: kling
-status: skeleton          # маппинг WS/RW/OR не проверен живьём — блокирует трату до спайка
+status: verified          # WaveSpeed std подтверждён живьём 2026-07-08 (5с start+end_image, $0.42 сверено списанием, интерполяция ✓); pro/OpenRouter/Runware НЕ проверены
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 10
@@ -11,17 +11,18 @@ cost_tier: medium
 providers:                # flat: цена НЕ зависит от разрешения (FINAL §3.2) — дёшев на 1080p
   wavespeed:
     supports_start_end: true
+    resolution_style: omit   # схема kling БЕЗ resolution/aspect_ratio (2026-07-08) — не слать, что шлёт конвейер
     pricing: flat
     tiers:
-      std: { id: "kwaivgi/kling-v3.0-std/start-end-to-video", usd_per_sec: 0.084 }
-      pro: { id: "kwaivgi/kling-v3.0-pro/start-end-to-video", usd_per_sec: 0.168 }
+      std: { id: "kwaivgi/kling-v3.0-std/image-to-video", usd_per_sec: 0.084 }  # живьём 2026-07-08: end_image принят, $0.42/5с; формула каталога base*duration/5*(sound?1.5:1); duration 3..15; resolution НЕ слать (нет в схеме)
+      pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.168 }
     default_tier: std
-  openrouter:
+  openrouter:             # models-list 2026-06-17: РЕАЛЬНЫЕ id; ⚠️ 720p-only; цена без аудио
     supports_start_end: true
     pricing: flat
     tiers:
-      std: { id: "kwaivgi/kling-3.0", usd_per_sec: 0.084 }
-      pro: { id: "kwaivgi/kling-3.0-pro", usd_per_sec: 0.168 }
+      std: { id: "kwaivgi/kling-v3.0-std", usd_per_sec: 0.084 }
+      pro: { id: "kwaivgi/kling-v3.0-pro", usd_per_sec: 0.112 }
     default_tier: std
   runware:
     supports_start_end: true

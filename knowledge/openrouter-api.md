@@ -64,3 +64,18 @@
   `pricing_skus.per-video-second-1080p`, а не по формуле ×2.25, если SKU присутствует.
 - `frame_images[].frame_type` = `first_frame`/`last_frame` ✓. Приём `data:`-URI в
   `image_url.url` вероятен, но докой явно не подтверждён — проверить на спайке.
+
+## Подтверждено живьём 2026-06-17 (спайк, ключ задан)
+- **`google/veo-3.1-lite` РАБОТАЕТ end-to-end:** submit→poll(`pending`→`completed`)→download.
+  Ответ poll: `{id, status, unsigned_urls:[".../videos/<id>/content?index=0"], usage:{cost}}`.
+  4с/720p без аудио = **$0.12** ($0.03/с — карточка поправлена, было $0.05). Файл — h264
+  1280×720 4.0с. Длительности модели: **[4,6,8]** (НЕ 5/10).
+- **⚠️ Скачивание требует Bearer:** `unsigned_urls` ведут на `api/v1/videos/<id>/content`
+  и без `Authorization` дают **HTTP 401**. Адаптер: `OpenRouterProvider._download_file`
+  переопределён (шлёт Bearer); CDN-ссылки WaveSpeed/Runware — без авторизации.
+- **Реальные id (GET /api/v1/videos/models):** `kwaivgi/kling-v3.0-std`/`-pro` (не
+  `kwaivgi/kling-3.0…`; OpenRouter Kling — **720p-only**, pro без аудио **$0.112/с**);
+  `bytedance/seedance-1-5-pro` (Seedance 1.5 Pro есть на OpenRouter).
+- **⚠️ Seedance на OpenRouter — токенная цена** (`video_tokens` $/токен), НЕ $/сек.
+  Наш `estimate_media_cost` (flat/scaled) её не выражает — seedance_2_0.openrouter остаётся
+  skeleton; нужна либо отдельная модель цены, либо брать Seedance у WaveSpeed/Runware.

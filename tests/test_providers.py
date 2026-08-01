@@ -506,3 +506,178 @@ def test_submit_unknown_tier_raises(kdir):
     with pytest.raises(ProviderError, match="tier"):
         p.submit("seedance_2_0", {"prompt": "m", "duration": 5, "tier": "nonexistent",
                                   "start_frame": "http://x/a.png"})
+
+
+def test_openrouter_download_sends_bearer(kdir, tmp_path, monkeypatch):
+    """OpenRouter unsigned_urls (api/v1/videos/<id>/content) ТРЕБУЮТ Bearer —
+    скачивание должно слать Authorization (иначе HTTP 401, выявлено на спайке)."""
+    import urllib.request
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-123")
+    p = make("openrouter", kdir)
+    captured = {}
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b"VIDEOBYTES"
+
+    def fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "out.mp4"
+    p._download_file("https://openrouter.ai/api/v1/videos/x/content?index=0", str(dest))
+    assert captured["auth"] == "Bearer test-key-123"
+    assert dest.read_bytes() == b"VIDEOBYTES"
+
+
+# --- Спайк 2026-07-08: card-driven стиль разрешения WaveSpeed image-моделей ---
+# Живые схемы /api/v3/models: flux/seedream/z_image принимают ТОЛЬКО size "W*H"
+# (aspect_ratio/resolution молча игнорируются -> квадрат); nano-banana принимает
+# aspect_ratio + resolution в k-нотации (0.5k/1k/2k/4k), "720p" -> HTTP 400.
+
+WS_SIZE_STYLE = """---
+id: flux_klein_test
+type: image
+status: verified
+providers:
+  wavespeed:
+    id: "wavespeed-ai/flux-2-klein-9b/text-to-image"
+    resolution_style: size
+    pricing: flat
+    usd_per_image: 0.01
+---
+# flux size-style
+"""
+
+WS_K_STYLE = """---
+id: nano_test
+type: image
+status: verified
+providers:
+  wavespeed:
+    id: "google/nano-banana-2/text-to-image"
+    resolution_style: k
+    pricing: flat
+    usd_per_image: 0.07
+---
+# nano k-style
+"""
+
+
+def _ws_img(tmp_path, text, mid):
+    d = tmp_path / "knowledge" / "images"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{mid}.md").write_text(text, encoding="utf-8")
+    return WaveSpeedProvider(knowledge_dir=tmp_path / "knowledge")
+
+
+def _captured_submit(p, monkeypatch, model, params):
+    captured = {}
+    monkeypatch.setattr(p, "_request", lambda m, u, json_body=None:
+                        captured.update(url=u, body=json_body) or {"data": {"id": "t"}})
+    p.submit(model, params)
+    return captured
+
+
+@pytest.mark.parametrize("resolution,aspect,size", [
+    ("720p", "16:9", "1280*720"),
+    ("720p", "9:16", "720*1280"),
+    ("1080p", "16:9", "1920*1080"),
+    ("1080p", "9:16", "1080*1920"),
+    ("720p", "1:1", "1024*1024"),
+    ("1080p", "1:1", "2048*2048"),
+])
+def test_ws_size_style_maps_resolution_aspect(tmp_path, monkeypatch,
+                                              resolution, aspect, size):
+    p = _ws_img(tmp_path, WS_SIZE_STYLE, "flux_klein_test")
+    c = _captured_submit(p, monkeypatch, "flux_klein_test",
+                         {"prompt": "x", "resolution": resolution,
+                          "aspect_ratio": aspect})
+    assert c["body"]["size"] == size
+    assert "aspect_ratio" not in c["body"] and "resolution" not in c["body"]
+
+
+def test_ws_size_style_default_aspect_16x9(tmp_path, monkeypatch):
+    p = _ws_img(tmp_path, WS_SIZE_STYLE, "flux_klein_test")
+    c = _captured_submit(p, monkeypatch, "flux_klein_test",
+                         {"prompt": "x", "resolution": "720p"})
+    assert c["body"]["size"] == "1280*720"
+
+
+def test_ws_size_style_unknown_combo_raises(tmp_path, monkeypatch):
+    p = _ws_img(tmp_path, WS_SIZE_STYLE, "flux_klein_test")
+    monkeypatch.setattr(p, "_request", lambda *a, **k: {"data": {"id": "t"}})
+    with pytest.raises(ProviderError, match="resolution_style"):
+        p.submit("flux_klein_test", {"prompt": "x", "resolution": "720p",
+                                     "aspect_ratio": "21:9"})
+
+
+def test_ws_k_style_maps_resolution(tmp_path, monkeypatch):
+    p = _ws_img(tmp_path, WS_K_STYLE, "nano_test")
+    c = _captured_submit(p, monkeypatch, "nano_test",
+                         {"prompt": "x", "resolution": "720p",
+                          "aspect_ratio": "16:9"})
+    assert c["body"]["resolution"] == "1k"
+    assert c["body"]["aspect_ratio"] == "16:9"
+
+
+def test_ws_k_style_1080p_is_2k(tmp_path, monkeypatch):
+    p = _ws_img(tmp_path, WS_K_STYLE, "nano_test")
+    c = _captured_submit(p, monkeypatch, "nano_test",
+                         {"prompt": "x", "resolution": "1080p"})
+    assert c["body"]["resolution"] == "2k"
+
+
+def test_ws_k_style_native_k_passthrough(tmp_path, monkeypatch):
+    p = _ws_img(tmp_path, WS_K_STYLE, "nano_test")
+    c = _captured_submit(p, monkeypatch, "nano_test",
+                         {"prompt": "x", "resolution": "4k"})
+    assert c["body"]["resolution"] == "4k"
+
+
+def test_ws_no_style_passthrough_unchanged(kdir, monkeypatch):
+    """Без resolution_style — прежнее поведение (видео-модели и пр.)."""
+    p = make("wavespeed", kdir)
+    captured = {}
+    monkeypatch.setattr(p, "_request", lambda m, u, json_body=None:
+                        captured.update(body=json_body) or {"data": {"id": "t"}})
+    p.submit("seedance_2_0", {"prompt": "x", "duration": 5, "tier": "fast",
+                              "resolution": "720p", "aspect_ratio": "16:9",
+                              "start_frame": "http://x/a.png"})
+    assert captured["body"]["resolution"] == "720p"
+    assert captured["body"]["aspect_ratio"] == "16:9"
+
+
+WS_OMIT_STYLE = """---
+id: kling_test
+type: video
+status: verified
+providers:
+  wavespeed:
+    id: "kwaivgi/kling-v3.0-std/image-to-video"
+    resolution_style: omit
+    supports_start_end: true
+    pricing: flat
+    usd_per_sec: 0.084
+---
+# kling omit-style
+"""
+
+
+def test_ws_omit_style_drops_resolution_and_aspect(tmp_path, monkeypatch):
+    """kling: схема БЕЗ resolution/aspect_ratio — конвейер шлёт их всегда,
+    resolution_style: omit выбрасывает оба до сети."""
+    d = tmp_path / "knowledge" / "video"
+    d.mkdir(parents=True)
+    (d / "kling_test.md").write_text(WS_OMIT_STYLE, encoding="utf-8")
+    p = WaveSpeedProvider(knowledge_dir=tmp_path / "knowledge")
+    captured = {}
+    monkeypatch.setattr(p, "_request", lambda m, u, json_body=None:
+                        captured.update(body=json_body) or {"data": {"id": "t"}})
+    p.submit("kling_test", {"prompt": "x", "duration": 5, "resolution": "720p",
+                            "aspect_ratio": "16:9", "start_frame": "http://x/a.png"})
+    assert "resolution" not in captured["body"]
+    assert "aspect_ratio" not in captured["body"]
+    assert captured["body"]["duration"] == 5
