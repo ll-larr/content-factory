@@ -94,7 +94,7 @@ class FakeProvider:
 
     def download(self, job_id, dest):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
-        Path(dest).write_bytes(b"x")
+        Path(dest).write_bytes(b"\x89PNG\r\n\x1a\n")
         return Path(dest)
 
 
@@ -424,3 +424,21 @@ def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
     m.save()
     assert run(proj, "segments") == 3
     assert "статус rejected" in capsys.readouterr().out
+
+
+def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
+    """ensure_png зовётся на кадрах и не зовётся на отрезках (там .mp4)."""
+    calls = []
+    monkeypatch.setattr(gb, "ensure_png", lambda p: calls.append(Path(p)))
+    fake_provider(monkeypatch)
+    run(proj, "storyboard")
+    assert [p.name for p in calls] == ["001.png", "002.png", "003.png"]
+
+    m = Manifest(proj / "manifest.json")
+    for n in (1, 2, 3):
+        m.set_status(f"ep01/storyboard/{n:03d}", "done")
+    m.save()
+    calls.clear()
+    fake_provider(monkeypatch)
+    run(proj, "segments")
+    assert calls == []

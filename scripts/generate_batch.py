@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from factory.ffmpeg_tools import ensure_png
 from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
@@ -203,6 +204,9 @@ def main(argv=None) -> int:
             job_id = provider.submit(j["model"], j["params"])
             provider.wait(job_id)
             provider.download(job_id, j["dest"])
+            if j["kind"] == "frame":
+                # провайдер может отдать JPEG под именем .png — нормализуем
+                ensure_png(j["dest"])
             manifest.set_status(
                 j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])

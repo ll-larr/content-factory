@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -53,3 +54,25 @@ def has_audio_stream(path: Path) -> bool:
                 "-show_entries", "stream=codec_type", "-of",
                 "default=noprint_wrappers=1:nokey=1", str(path)])
     return "audio" in out
+
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def ensure_png(path: Path) -> Path:
+    """Гарантировать, что файл с именем *.png действительно PNG.
+
+    WaveSpeed на image-моделях отдаёт JPEG, а конвейер хранит кадры под именем
+    NNN.png — конвенция путей (factory.shots.frame_path), на неё ссылаются refs
+    в shots.json. Имя менять нельзя, поэтому нормализуем содержимое.
+    """
+    path = Path(path)
+    if path.read_bytes()[:8] == PNG_MAGIC:
+        return path
+    src = path.with_suffix(path.suffix + ".src")
+    os.replace(path, src)
+    try:
+        run_ffmpeg(["-i", str(src), str(path)])
+    finally:
+        src.unlink(missing_ok=True)
+    return path

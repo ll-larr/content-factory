@@ -36,3 +36,15 @@ def make_tone():
                  "-c:a", "aac", str(path)])
         return path
     return _make
+
+
+@pytest.fixture
+def make_jpeg():
+    """Картинка-заглушка в JPEG (lavfi color) — имитирует ответ WaveSpeed."""
+    def _make(path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=64x36:d=1",
+                 "-frames:v", "1", "-f", "mjpeg", str(path)])
+        return path
+    return _make
