@@ -1,16 +1,20 @@
-"""Батч-генерация кадров или видеоотрезков по shots.json (спека §8; провайдеры — FINAL §5).
+"""Батч-генерация референсов персонажей, кадров или видеоотрезков по shots.json
+(спека §8; провайдеры — FINAL §5; стадия characters — спека 2026-08-02 §9).
 
 Запускать из корня репозитория:
+  python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage characters
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage storyboard
   python scripts/generate_batch.py --project projects/pilot --episode ep01 --stage segments
 Флаг --yes пропускает подтверждение сметы (для тестов/автоматизации).
-Кадры идут через image-провайдера проекта, отрезки — через video-провайдера
-(оба задаются в project.json; дефолт — по типу контента, FINAL §4).
+Референсы персонажей и кадры идут через image-провайдера проекта, отрезки — через
+video-провайдера (оба задаются в project.json; дефолт — по типу контента, FINAL §4).
 Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
 
 Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию или промпт
 кадра не прошёл гейт консистентности (§10: {{style}}/{{char:...}}/refs);
-3 segments заблокирован — кадры не приняты ревью.
+3 стадия заблокирована — закрыт гейт пре-продакшна (§5: карточка персонажа не
+одобрена и т.п.), кадры не приняты ревью (segments) или референс персонажа не
+принят ревью (storyboard).
 """
 from __future__ import annotations
 
@@ -24,8 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from factory.ffmpeg_tools import FfmpegError, ensure_png
 from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_image_model, validate_video_model
+from factory.preprod import episode_cast, stage_gate
 from factory.project import load_project
-from factory.prompts import expand_prompt, prompt_problems
+from factory.prompts import canonical_block, expand_prompt, prompt_problems
 from factory.providers import get_provider
 from factory.providers.base import ProviderError
 from factory.shots import frame_path, load_shots, segment_path
@@ -48,11 +53,37 @@ def _validation_gate(problems: list[str]) -> int:
     return 2
 
 
-def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
+def build_jobs(stage: str, shots: dict | None, project, episode_dir: Path,
                project_dir: Path) -> list[dict]:
-    ep = shots["episode"]
     aspect = "9:16" if project.type == "shorts" else "16:9"
     jobs = []
+    if stage == "characters":
+        # Референсы — по составу ИМЕННО этой серии (episode_cast), а не по всем
+        # карточкам bible/characters/: карточка персонажа из другой серии не
+        # должна ни блокировать эту, ни оплачиваться повторно (поправка 2 задачи
+        # 6; та же логика, что уже применена в preprod._cast_problems).
+        # shots для этой стадии не нужен и не загружается (episode здесь берём из
+        # имени папки эпизода) — этап 5 (characters) в спеке §8 предшествует
+        # этапу 6 (storyboard), который только и производит shots.json, поэтому
+        # на момент запуска этой стадии файла может ещё не существовать.
+        for name in episode_cast(project_dir, episode_dir.name):
+            card = project_dir / "bible" / "characters" / f"{name}.md"
+            appearance = canonical_block(card, "appearance")
+            jobs.append({
+                "item_id": f"bible/characters/{name}",
+                "kind": "character_ref",
+                "model": project.image_model,
+                "dest": card.with_name(f"{name}-ref.png"),
+                "params": {
+                    "prompt": f"character sheet, three angles, neutral background. "
+                              f"{appearance}",
+                    "refs": [], "aspect_ratio": aspect,
+                    "resolution": project.resolution, "tier": project.image_tier,
+                },
+            })
+        return jobs
+
+    ep = shots["episode"]
     if stage == "storyboard":
         for f in shots["frames"]:
             # refs в shots.json — относительно папки проекта; передаём
@@ -92,7 +123,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", required=True)
     ap.add_argument("--episode", required=True)
-    ap.add_argument("--stage", required=True, choices=["storyboard", "segments"])
+    ap.add_argument("--stage", required=True,
+                    choices=["storyboard", "segments", "characters"])
     ap.add_argument("--yes", action="store_true",
                     help="не спрашивать подтверждение сметы")
     args = ap.parse_args(argv)
@@ -100,10 +132,16 @@ def main(argv=None) -> int:
     project_dir = Path(args.project)
     project = load_project(project_dir / "project.json")
     episode_dir = project_dir / "episodes" / args.episode
-    shots = load_shots(episode_dir / "shots.json", project_dir)
     manifest = Manifest(project_dir / "manifest.json")
 
     aspect = "9:16" if project.type == "shorts" else "16:9"
+
+    # shots.json грузим только там, где он нужен: этап characters (спека §8)
+    # предшествует этапу storyboard, который его производит, — на момент запуска
+    # characters файла может ещё не существовать.
+    shots = None
+    if args.stage in ("storyboard", "segments"):
+        shots = load_shots(episode_dir / "shots.json", project_dir)
 
     if args.stage == "segments":
         provider_name = project.video_provider
@@ -162,6 +200,42 @@ def main(argv=None) -> int:
             return 2
     else:
         provider_name = project.image_provider
+
+        if args.stage == "characters":
+            # Гейт первой половины (спека §5/§9): характеры генерируются только
+            # для одобренного (текстово) состава серии — stage_gate сам смотрит
+            # состав через episode_cast, а не на то, что уже лежит в
+            # bible/characters/ (поправка 1 задачи 6).
+            problems = stage_gate(project_dir, "characters", args.episode)
+            if problems:
+                print("ГЕЙТ ЗАКРЫТ — стадия characters недоступна:")
+                for p in problems:
+                    print(f"  - {p}")
+                return 3
+
+        if args.stage == "storyboard":
+            # Чекпоинт консистентности (спека §9): раскадровка не стартует, пока
+            # референс каждого персонажа СОСТАВА ЭТОЙ СЕРИИ (episode_cast, а не
+            # все карточки bible/characters/ — поправка 2 задачи 6) не принят
+            # ревью — done или accepted_with_notes.
+            accepted = {"done", "accepted_with_notes"}
+            not_ready = []
+            for name in episode_cast(project_dir, args.episode):
+                item_id = f"bible/characters/{name}"
+                try:
+                    status = manifest.get(item_id)["status"]
+                except ManifestError:
+                    not_ready.append(f"{item_id}: референс не генерировался")
+                    continue
+                if status not in accepted:
+                    not_ready.append(f"{item_id}: статус {status}")
+            if not_ready:
+                print("РЕФЕРЕНСЫ ПЕРСОНАЖЕЙ НЕ ПРИНЯТЫ — стадия storyboard "
+                      "заблокирована:")
+                for p in not_ready:
+                    print(f"  - {p}")
+                return 3
+
         # Гейт трат раскадровки (симметрично video): валидация image-модели под
         # выбранного провайдера ДО сметы — skeleton/не-тот-провайдер → код 2.
         card = find_card(KNOWLEDGE_DIR, project.image_model)
@@ -270,8 +344,9 @@ def main(argv=None) -> int:
             job_id = provider.submit(j["model"], j["params"])
             provider.wait(job_id)
             provider.download(job_id, j["dest"])
-            if j["kind"] == "frame":
+            if j["kind"] in ("frame", "character_ref"):
                 # провайдер может отдать JPEG под именем .png — нормализуем
+                # (референс персонажа — такой же скачанный PNG-файл, как кадр)
                 ensure_png(j["dest"])
             manifest.set_status(
                 j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
