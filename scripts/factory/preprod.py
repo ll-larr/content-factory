@@ -69,11 +69,23 @@ def dependencies(project_dir: Path, art: Artifact) -> list[Path]:
 
 
 def artifact_state(project_dir: Path, path: Path) -> str:
-    """missing | draft | approved | stale_self | stale_deps."""
+    """missing | broken | draft | approved | stale_self | stale_deps.
+
+    `broken` — файл есть, но не читается (битый frontmatter, каталог вместо файла).
+    Отдельное состояние нужно ради формулировки: сказать про такой файл «не одобрен
+    (status: draft)» значит послать человека одобрять то, что не разбирается. Гейт
+    трактует его как всякое не-approved, но сообщение даёт другое.
+
+    Нечитаемая ЗАВИСИМОСТЬ — это по-прежнему `stale_deps`, а не `broken`: там речь
+    не про этот файл, а про то, что его основание невозможно подтвердить.
+    """
     project_dir, path = Path(project_dir), Path(path)
     if not path.exists():
         return "missing"
-    art = load_artifact(path)
+    try:
+        art = load_artifact(path)
+    except (ArtifactError, OSError):
+        return "broken"
     if art.meta.get("status") != "approved":
         return "draft"
     if art.meta.get("content_sha") != art.sha:
@@ -109,6 +121,7 @@ STAGE_REQUIRES: dict[str, list[str]] = {
 
 _STATE_MESSAGE = {
     "missing": "не существует",
+    "broken": "не читается: битый frontmatter — почини файл, одобрять нечего",
     "draft": "не одобрен (status: draft)",
     "stale_self": "изменён после одобрения — перечитай и одобри заново",
     "stale_deps": "устарел: изменился файл, на который он опирался",

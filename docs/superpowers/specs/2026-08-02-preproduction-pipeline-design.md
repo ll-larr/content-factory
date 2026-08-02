@@ -119,11 +119,14 @@ characters: [Мурзик, Барсик]
 Модуль `scripts/factory/preprod.py`:
 
 ```python
-artifact_state(path) -> "missing" | "draft" | "approved" | "stale_self" | "stale_deps"
+artifact_state(path) -> "missing" | "broken" | "draft" | "approved" | "stale_self" | "stale_deps"
 stage_gate(project, stage, episode=None) -> list[str]     # пусто = можно
 next_stage(project) -> tuple[str, str | None]             # (stage, episode)
 ```
 
+- `broken` — файл есть, но не читается (битый frontmatter). Отдельное состояние ради
+  формулировки: сказать про такой файл «не одобрен (draft)» значит послать человека
+  одобрять то, что не разбирается.
 - `stale_self` — `status: approved`, но текущий хеш тела ≠ `content_sha`.
 - `stale_deps` — свой хеш сходится, но хеш какого-то файла из `depends_on` не сходится.
 

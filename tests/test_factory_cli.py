@@ -151,3 +151,18 @@ def test_status_lists_every_artifact(proj, capsys):
     out = capsys.readouterr().out
     for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md"):
         assert rel in out
+
+
+def test_approve_refuses_broken_target(proj):
+    """approve обязан отказать с кодом 1, а не упасть трейсбеком, если файл,
+    который он одобряет, не разбирается."""
+    run("init", "--project", proj)
+    (proj / "bible" / "idea.md").write_text("текст без frontmatter\n", encoding="utf-8")
+    assert run("approve", "--project", proj, "bible/idea.md") == 1
+
+
+def test_status_survives_broken_artifact(proj, capsys):
+    run("init", "--project", proj)
+    (proj / "bible" / "idea.md").write_text("текст без frontmatter\n", encoding="utf-8")
+    assert run("status", "--project", proj) == 0
+    assert "broken" in capsys.readouterr().out

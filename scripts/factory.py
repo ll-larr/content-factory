@@ -86,7 +86,13 @@ def cmd_approve(project_dir: Path, rel: str) -> int:
     if not path.exists():
         print(f"нет файла {rel}")
         return 1
-    art = load_artifact(path)
+    try:
+        art = load_artifact(path)
+    except (ArtifactError, OSError) as e:
+        # Отказ, а не трейсбек: команду запускает человек, и ему нужно понять, что
+        # чинить. Симметрично обработке нечитаемой зависимости ниже.
+        print(f"{rel}: не читается — {e}")
+        return 1
     if not art.body.strip():
         print(f"{rel}: тело пустое — нечего одобрять")
         return 1

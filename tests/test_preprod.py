@@ -275,3 +275,20 @@ def test_storyboard_gate_survives_script_without_cast(tmp_path):
     _closed_story(p)
     write(p / "episodes" / "ep01" / "script.md", "script", "титры", status="approved")
     assert stage_gate(p, "storyboard", "ep01") == []
+
+
+def test_broken_artifact_reads_as_broken_not_draft(proj):
+    """Битый файл — отдельное состояние. Сказать про него «не одобрен (draft)»
+    значит послать человека одобрять то, что не читается."""
+    p = proj / "bible" / "idea.md"
+    p.write_text("текст без frontmatter\n", encoding="utf-8")
+    assert artifact_state(proj, p) == "broken"
+
+
+def test_gate_names_broken_artifact_readably(tmp_path):
+    p = make_project(tmp_path)
+    (p / "bible").mkdir(exist_ok=True)
+    (p / "bible" / "idea.md").write_text("без шапки\n", encoding="utf-8")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    problems = stage_gate(p, "script", "ep01")
+    assert any("не читается" in x for x in problems), problems
