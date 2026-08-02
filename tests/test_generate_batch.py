@@ -561,8 +561,8 @@ def test_segments_reject_stray_placeholder(proj, monkeypatch):
     for n in (1, 2, 3):
         item_id = f"ep01/storyboard/{n:03d}"
         m.add(item_id, kind="frame")
-        m.set_status(item_id, "generated")
-        m.set_status(item_id, "done")
+        for status in ("generating", "generated", "done"):
+            m.set_status(item_id, status)
     m.save()
     fp = fake_provider(monkeypatch)
     assert run(proj, "segments") == 2
