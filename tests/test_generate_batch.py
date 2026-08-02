@@ -42,13 +42,38 @@ def write_image_card(tmp_path):
     (idir / "z_image.md").write_text(IMAGE_CARD, encoding="utf-8")
 
 
+def write_script(project_dir, episode="ep01", characters=()):
+    """Одобренный сценарий эпизода: гейт storyboard (спека 2026-08-02 §5) требует
+    его наравне со стайл-гайдом, иначе раскадровка стартовала бы на неодобренном
+    тексте."""
+    body = "сценарий"
+    meta = {"kind": "script", "status": "approved", "content_sha": body_sha(body)}
+    if characters:
+        meta["characters"] = list(characters)
+    save_artifact(Artifact(path=project_dir / "episodes" / episode / "script.md",
+                           meta=meta, body=body))
+
+
 def write_style_guide(project_dir):
     """Style-guide проекта с каноническим блоком: без него {{style}} в промптах
-    кадров не проходит ни гейт §10 (test_prompts.py), ни expand_prompt."""
+    кадров не проходит ни гейт §10, ни expand_prompt. content_sha обязателен —
+    иначе artifact_state справедливо считает артефакт изменённым после одобрения."""
+    body = "<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"
     save_artifact(Artifact(
         path=project_dir / "bible" / "style-guide.md",
-        meta={"kind": "style-guide", "status": "approved"},
-        body="<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"))
+        meta={"kind": "style-guide", "status": "approved",
+              "content_sha": body_sha(body)},
+        body=body))
+
+
+def write_character(project_dir, name):
+    """Одобренная карточка персонажа с каноническим блоком внешности."""
+    body = f"<!-- canonical:appearance -->orange cat {name}<!-- /canonical:appearance -->"
+    save_artifact(Artifact(
+        path=project_dir / "bible" / "characters" / f"{name}.md",
+        meta={"kind": "character", "status": "approved",
+              "content_sha": body_sha(body)},
+        body=body))
 
 
 @pytest.fixture
@@ -81,6 +106,7 @@ def proj(tmp_path, monkeypatch):
     (kdir / "seedance_2_0.md").write_text(VIDEO_CARD, encoding="utf-8")
     write_image_card(tmp_path)
     write_style_guide(pdir)
+    write_script(pdir)
     monkeypatch.chdir(tmp_path)
     return pdir
 
@@ -359,6 +385,7 @@ def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
     }), encoding="utf-8")
     write_image_card(tmp_path)
     write_style_guide(pdir)
+    write_script(pdir)
     monkeypatch.chdir(tmp_path)
     fp = fake_provider(monkeypatch)
     result = gb.main(["--project", str(pdir), "--episode", "ep01",
@@ -530,10 +557,7 @@ def test_storyboard_rejects_frame_without_style_placeholder(proj, monkeypatch):
 
 def test_storyboard_expands_placeholders_and_records_sent_prompt(proj, monkeypatch):
     """Провайдер получает развёрнутый текст, а манифест хранит то, что реально ушло."""
-    save_artifact(Artifact(
-        path=proj / "bible" / "style-guide.md",
-        meta={"kind": "style-guide", "status": "approved"},
-        body="<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"))
+    write_style_guide(proj)   # с content_sha: иначе гейт видит stale_self
 
     shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
         encoding="utf-8"))
@@ -605,6 +629,9 @@ def test_characters_stage_prompt_contains_appearance(proj, monkeypatch):
 
 
 def test_characters_stage_blocked_without_cards(proj, monkeypatch):
+    """Состав объявлен, карточек нет — гейт закрыт. Пустой состав (заставка,
+    титры) законен и стадию не блокирует, поэтому объявляем персонажа явно."""
+    write_script(proj, characters=["murzik"])
     """Ни сценария, ни карточек — гейт закрывает стадию через stage_gate
     (episodes/ep01/script.md не существует), а не через литеральную проверку "нет
     ни одной карточки" из брифа: та убрана поправкой 1, потому что серия без

@@ -108,8 +108,16 @@ def prompt_problems(prompt: str, project_dir: Path, refs: list[str]) -> list[str
         if not card.exists():
             problems.append(f"персонаж {arg!r}: нет карточки {card.name}")
             continue
-        if load_artifact(card).meta.get("status") != "approved":
-            problems.append(f"персонаж {arg!r}: не одобрен")
+        # artifact_state, а не meta["status"]: карточка, правленная после
+        # одобрения (stale_self) или с уехавшим основанием (stale_deps), формально
+        # несёт status: approved и проходила бы ПЛАТНЫЙ гейт, хотя factory.py check
+        # её отбивает (находка финального ревью).
+        from factory.preprod import artifact_state
+        state = artifact_state(project_dir, card)
+        if state != "approved":
+            problems.append(f"персонаж {arg!r}: карточка не одобрена ({state})")
+        if not has_canonical(card, "appearance"):
+            problems.append(f"персонаж {arg!r}: нет блока canonical:appearance")
         if f"{arg}-ref" not in refs_joined:
             problems.append(f"персонаж {arg!r}: нет его референса в refs кадра")
     return problems

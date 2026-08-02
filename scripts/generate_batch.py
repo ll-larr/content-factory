@@ -214,6 +214,17 @@ def main(argv=None) -> int:
                 return 3
 
         if args.stage == "storyboard":
+            # Гейт первой половины — тот же, что у factory.py check. Без него
+            # раскадровка стартовала на неодобренном сценарии, устаревшей карточке
+            # или стайл-гайде без канонического блока, и падала трейсбеком из
+            # expand_prompt уже внутри build_jobs (находка финального ревью).
+            problems = stage_gate(project_dir, "storyboard", args.episode)
+            if problems:
+                print("ГЕЙТ ЗАКРЫТ — стадия storyboard недоступна:")
+                for p in problems:
+                    print(f"  - {p}")
+                return 3
+
             # Чекпоинт консистентности (спека §9): раскадровка не стартует, пока
             # референс каждого персонажа СОСТАВА ЭТОЙ СЕРИИ (episode_cast, а не
             # все карточки bible/characters/ — поправка 2 задачи 6) не принят
@@ -268,7 +279,13 @@ def main(argv=None) -> int:
                     print(f"  - {p}")
                 return 2
 
-    jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
+    try:
+        jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
+    except PromptError as e:
+        # Последний рубеж: гейты выше ловят известные причины, но развернуть
+        # плейсхолдер может помешать и то, чего они не знают. Внятный код, а не
+        # трейсбек (находка финального ревью).
+        return _validation_gate([f"не удалось развернуть промпт: {e}"])
     for j in jobs:
         manifest.add(j["item_id"], kind=j["kind"])
     manifest.save()
@@ -328,6 +345,21 @@ def main(argv=None) -> int:
     models_used = ", ".join(sorted({j["model"] for j in todo}))
     print(f"СМЕТА: {len(todo)} генераций, ~{total:.4f} {provider.unit} "
           f"({args.stage}, провайдер {provider_name}, модели: {models_used}).")
+    # Потолок бюджета автономного режима (спека §7). Проверяет КОД, а не скилл:
+    # при autonomy: full запуск идёт с --yes, и любая пропущенная инструкция
+    # означала бы трату без потолка (находка финального ревью).
+    if project.raw.get("autonomy") == "full":
+        budget = project.raw.get("budget_usd")
+        if budget is None:
+            print("autonomy: full требует budget_usd в project.json")
+            return 1
+        remainder = float(budget) - manifest.credits_total()
+        if total > remainder:
+            print(f"БЮДЖЕТ ИСЧЕРПАН: смета {total:.4f} > остаток {remainder:.4f} "
+                  f"(потолок {float(budget):.2f}, потрачено "
+                  f"{manifest.credits_total():.4f}). Батч не урезаем — остановка.")
+            return 3
+
     if not args.yes:
         if input("Запустить? [y/N] ").strip().lower() != "y":
             print("Отменено.")

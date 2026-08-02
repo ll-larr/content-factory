@@ -1,7 +1,7 @@
 """Тесты плейсхолдеров в промптах кадров (спека 2026-08-02 §10)."""
 import pytest
 
-from factory.artifact import Artifact, save_artifact
+from factory.artifact import Artifact, body_sha, save_artifact
 from factory.prompts import PromptError, canonical_block, expand_prompt, prompt_problems
 
 STYLE = """Общий стиль сериала.
@@ -22,10 +22,12 @@ orange tabby cat, white chest patch, blue spacesuit
 @pytest.fixture
 def proj(tmp_path):
     save_artifact(Artifact(path=tmp_path / "bible" / "style-guide.md",
-                           meta={"kind": "style-guide", "status": "approved"},
+                           meta={"kind": "style-guide", "status": "approved",
+                                 "content_sha": body_sha(STYLE)},
                            body=STYLE))
     save_artifact(Artifact(path=tmp_path / "bible" / "characters" / "murzik.md",
-                           meta={"kind": "character", "status": "approved"},
+                           meta={"kind": "character", "status": "approved",
+                                 "content_sha": body_sha(MURZIK)},
                            body=MURZIK))
     return tmp_path
 

@@ -96,7 +96,9 @@ python scripts/factory.py check --project <проект> --stage characters --ep
 
 1. Если `project.json.autonomy == "full"` — сначала бюджет, ДО запуска
    генерации (процедура и обоснование — в `.claude/skills/factory/SKILL.md`,
-   раздел «Бюджет»; кратко: `echo n | generate_batch.py ...` даёт смету без
+   раздел «Бюджет»; кратко: потолок при `autonomy: full` держит сам
+   `generate_batch.py` — он вернёт код 3 до трат, если смета не влезает в
+   остаток `budget_usd`. Считать и сверять вручную не нужно.
    траты денег, затем `factory.py budget --estimate <число>` решает, можно ли
    тратить).
 2. Смета и подтверждение (если бюджет уже проверен или `autonomy` не `full` —

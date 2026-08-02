@@ -201,6 +201,8 @@ def test_next_stage_walks_all_episodes_in_order(tmp_path):
     # ядро задачи. Закрываем разрыв: доводим ep01 до конца и проверяем, что
     # резолвер продолжает со script следующего эпизода, а не останавливается.
     write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
+    assert next_stage(p) == ("characters", "ep01"), "референс ещё не принят"
+    _accept_ref(p, "Мурзик")
     assert next_stage(p) == ("storyboard", "ep01")
 
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
@@ -219,6 +221,19 @@ def test_next_stage_none_when_nothing_left(tmp_path):
 
 
 # --- Находка ревью: персонаж, введённый в поздней серии, проходил гейт без карточки ---
+
+def _accept_ref(p, name):
+    """Отметить референс персонажа принятым ревью — этап characters закрыт только
+    когда закрыты обе его половины: тексты карточек и платные референсы."""
+    from factory.manifest import Manifest
+    m = Manifest(p / "manifest.json")
+    item_id = f"bible/characters/{name}"
+    if item_id not in m.data["items"]:
+        m.add(item_id, kind="character_ref")
+        for st in ("generating", "generated", "done"):
+            m.set_status(item_id, st)
+    m.save()
+
 
 def _closed_story(p):
     """Одобрить story-артефакты, чтобы дойти до поэпизодных гейтов.
@@ -241,6 +256,7 @@ def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
     write(p / "episodes" / "ep02" / "script.md", "script", "с2",
           status="approved", characters=["Мурзик", "Барсик"])
     write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
+    _accept_ref(p, "Мурзик")
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
 
     assert next_stage(p) == ("characters", "ep02")
@@ -325,3 +341,23 @@ def test_storyboard_gate_flags_style_guide_without_canonical_block(tmp_path):
     write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
     problems = stage_gate(p, "storyboard", "ep01")
     assert any("canonical:style" in x for x in problems), problems
+
+
+def test_next_stage_stays_on_characters_until_refs_accepted(tmp_path):
+    """Карточки одобрены, но референсы не сгенерированы — этап characters не закрыт.
+    Иначе драйвер уходил бы в storyboard и упирался в код 3 на каждом эпизоде."""
+    from factory.manifest import Manifest
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["Мурзик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY,
+          status="approved")
+    assert next_stage(p) == ("characters", "ep01")
+
+    m = Manifest(p / "manifest.json")
+    m.add("bible/characters/Мурзик", kind="character_ref")
+    for st in ("generating", "generated", "done"):
+        m.set_status("bible/characters/Мурзик", st)
+    m.save()
+    assert next_stage(p) == ("storyboard", "ep01")

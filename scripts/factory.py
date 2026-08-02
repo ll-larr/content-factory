@@ -59,12 +59,41 @@ def cmd_init(project_dir: Path) -> int:
     return 0
 
 
+def _edited_since_commit(path: Path) -> bool:
+    """Правил ли человек файл после того, как его закоммитил скилл этапа.
+
+    Скилл коммитит артефакт сразу после генерации (спека §11), поэтому git и есть
+    база сравнения «что написала машина» против «что стало после человека».
+    """
+    result = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", str(path)],
+                            capture_output=True, encoding="utf-8", errors="replace")
+    # Вне git-репозитория git тоже отдаёт код 1 (вместе с ошибкой в stderr), поэтому
+    # одного кода возврата мало: без проверки stderr всякий артефакт вне репо
+    # выглядел бы правленным.
+    if result.stderr.strip():
+        return False
+    return result.returncode == 1
+
+
+def effective_feedback(path: Path) -> str:
+    """Состояние обратной связи с поправкой на факт правки.
+
+    Поле в артефакте само по себе не знает, что человек его правил: в `pending` его
+    никто не переводит. Без этой поправки `/factory-feedback` не находил бы ни одной
+    строки и вся петля §11 была бы мёртвой (находка финального ревью).
+    """
+    state = feedback_state(path)
+    if state == "none" and _edited_since_commit(path):
+        return "pending"
+    return state
+
+
 def cmd_status(project_dir: Path) -> int:
     print(f"{'артефакт':34} {'состояние':12} feedback")
     for path in _project_artifacts(project_dir):
         rel = path.relative_to(project_dir).as_posix()
         print(f"{rel:34} {artifact_state(project_dir, path):12} "
-              f"{feedback_state(path)}")
+              f"{effective_feedback(path)}")
     return 0
 
 

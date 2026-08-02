@@ -247,3 +247,26 @@ def test_budget_requires_budget_usd_in_full_mode(proj, capsys):
     }), encoding="utf-8")
     assert run("budget", "--project", proj, "--estimate", "0.1") == 1
     assert "budget_usd" in capsys.readouterr().out
+
+
+def test_effective_feedback_reports_pending_after_human_edit(proj, monkeypatch):
+    """feedback: none + файл правлен после коммита = pending. Без этой поправки
+    /factory-feedback не нашёл бы ни одной строки и петля §11 была бы мёртвой."""
+    import factory_cli_entry as fce
+    run("init", "--project", proj)
+    path = proj / "bible" / "idea.md"
+
+    monkeypatch.setattr(fce._mod, "_edited_since_commit", lambda p: False)
+    assert fce._mod.effective_feedback(path) == "none"
+
+    monkeypatch.setattr(fce._mod, "_edited_since_commit", lambda p: True)
+    assert fce._mod.effective_feedback(path) == "pending"
+
+
+def test_effective_feedback_keeps_recorded_over_edit(proj, monkeypatch):
+    """Уже разобранная правка не откатывается в pending при каждом чихе."""
+    import factory_cli_entry as fce
+    run("init", "--project", proj)
+    run("feedback", "--project", proj, "bible/idea.md", "--state", "recorded")
+    monkeypatch.setattr(fce._mod, "_edited_since_commit", lambda p: True)
+    assert fce._mod.effective_feedback(proj / "bible" / "idea.md") == "recorded"

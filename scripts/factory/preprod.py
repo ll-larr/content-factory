@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from factory.artifact import Artifact, ArtifactError, load_artifact
+from factory.manifest import Manifest, ManifestError
 from factory.prompts import has_canonical
 
 # Карта зависимостей по kind — фиксированная, а не свободный список: иначе два
@@ -136,6 +137,34 @@ def episode_ids(project_dir: Path) -> list[str]:
     return [f"ep{i:02d}" for i in range(1, count + 1)]
 
 
+ACCEPTED_REF = {"done", "accepted_with_notes"}
+
+
+def refs_pending(project_dir: Path, episode: str) -> list[str]:
+    """Персонажи серии, чей референс ещё не принят ревью.
+
+    Нужен резолверу: этап characters состоит из двух половин — тексты карточек и
+    платная генерация референсов. Считать этап закрытым по одним лишь одобренным
+    текстам значит никогда не позвать вторую половину: драйвер уходил бы в
+    storyboard и упирался там в код 3 на каждом эпизоде (находка финального ревью).
+    """
+    project_dir = Path(project_dir)
+    manifest_path = project_dir / "manifest.json"
+    if not manifest_path.exists():
+        return list(episode_cast(project_dir, episode))
+    manifest = Manifest(manifest_path)
+    waiting = []
+    for name in episode_cast(project_dir, episode):
+        try:
+            status = manifest.get(f"bible/characters/{name}")["status"]
+        except ManifestError:
+            waiting.append(name)
+            continue
+        if status not in ACCEPTED_REF:
+            waiting.append(name)
+    return waiting
+
+
 def stage_gate(project_dir: Path, stage: str, episode: str | None = None) -> list[str]:
     """Пустой список = этап можно запускать. Иначе — по строке на каждую причину."""
     project_dir = Path(project_dir)
@@ -228,7 +257,7 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
     for ep in episode_ids(project_dir):
         if artifact_state(project_dir, project_dir / f"episodes/{ep}/script.md") != "approved":
             return ("script", ep)
-        if _cast_problems(project_dir, ep):
+        if _cast_problems(project_dir, ep) or refs_pending(project_dir, ep):
             return ("characters", ep)
         if not (project_dir / "episodes" / ep / "shots.json").exists():
             return ("storyboard", ep)

@@ -8,3 +8,6 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 main = _mod.main
+
+# Сам модуль — чтобы тесты могли подменять его внутренние функции.
+__all__ = ["main", "_mod"]
