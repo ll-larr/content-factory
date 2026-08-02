@@ -34,6 +34,18 @@ def canonical_block(path: Path, name: str) -> str:
     return match.group(1).strip()
 
 
+def has_canonical(path: Path, name: str) -> bool:
+    """Есть ли в артефакте блок canonical:<name>. Без исключения — нужен гейтам,
+    которые обязаны вернуть список проблем, а не упасть."""
+    path = Path(path)
+    if not path.exists():
+        return False
+    try:
+        return _canonical_re(name).search(load_artifact(path).body) is not None
+    except Exception:
+        return False
+
+
 def _character_card(project_dir: Path, name: str) -> Path:
     return Path(project_dir) / "bible" / "characters" / f"{name}.md"
 

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from factory.artifact import Artifact, ArtifactError, load_artifact
+from factory.prompts import has_canonical
 
 # Карта зависимостей по kind — фиксированная, а не свободный список: иначе два
 # запуска approve дали бы разный depends_on и проверка устаревания стала бы
@@ -166,10 +167,17 @@ def _cast_problems(project_dir: Path, episode: str) -> list[str]:
     problems = []
     for name in episode_cast(project_dir, episode):
         card = project_dir / "bible" / "characters" / f"{name}.md"
+        rel = card.relative_to(project_dir).as_posix()
         state = artifact_state(project_dir, card)
         if state != "approved":
-            rel = card.relative_to(project_dir).as_posix()
             problems.append(f"{rel} (персонаж {name}): {_STATE_MESSAGE[state]}")
+            continue
+        # Карточка одобрена, но без канонического блока разворачивать в промпте
+        # нечего: build_jobs упал бы трейсбеком вместо внятного кода возврата.
+        if not has_canonical(card, "appearance"):
+            problems.append(
+                f"{rel} (персонаж {name}): нет блока <!-- canonical:appearance --> — "
+                "промпт кадра нечем разворачивать")
     return problems
 
 

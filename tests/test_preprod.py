@@ -18,6 +18,9 @@ def write(path, kind, body, status="draft", **extra):
     return art
 
 
+CHAR_BODY = "<!-- canonical:appearance -->orange cat<!-- /canonical:appearance -->"
+
+
 @pytest.fixture
 def proj(tmp_path):
     (tmp_path / "bible").mkdir()
@@ -196,7 +199,7 @@ def test_next_stage_walks_all_episodes_in_order(tmp_path):
     # именно это (§7: "все эпизоды по порядку, не останавливаясь на первом") —
     # ядро задачи. Закрываем разрыв: доводим ep01 до конца и проверяем, что
     # резолвер продолжает со script следующего эпизода, а не останавливается.
-    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     assert next_stage(p) == ("storyboard", "ep01")
 
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
@@ -209,7 +212,7 @@ def test_next_stage_none_when_nothing_left(tmp_path):
                       ("bible/style-guide.md", "style-guide")):
         write(p / rel, kind, "текст", status="approved")
     write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
-    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
     assert next_stage(p) is None
 
@@ -233,7 +236,7 @@ def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
           status="approved", characters=["Мурзик"])
     write(p / "episodes" / "ep02" / "script.md", "script", "с2",
           status="approved", characters=["Мурзик", "Барсик"])
-    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
 
     assert next_stage(p) == ("characters", "ep02")
@@ -244,7 +247,7 @@ def test_storyboard_gate_names_character_without_card(tmp_path):
     _closed_story(p)
     write(p / "episodes" / "ep02" / "script.md", "script", "с2",
           status="approved", characters=["Мурзик", "Барсик"])
-    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
 
     problems = stage_gate(p, "storyboard", "ep02")
     assert any("Барсик" in x for x in problems), problems
@@ -255,7 +258,7 @@ def test_storyboard_gate_open_when_whole_cast_approved(tmp_path):
     _closed_story(p)
     write(p / "episodes" / "ep01" / "script.md", "script", "с1",
           status="approved", characters=["Мурзик"])
-    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     assert stage_gate(p, "storyboard", "ep01") == []
 
 
@@ -292,3 +295,16 @@ def test_gate_names_broken_artifact_readably(tmp_path):
     write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
     problems = stage_gate(p, "script", "ep01")
     assert any("не читается" in x for x in problems), problems
+
+
+def test_cast_gate_flags_card_without_canonical_appearance(tmp_path):
+    """Одобренная карточка без блока canonical:appearance — промпт кадра нечем
+    разворачивать; поймать надо гейтом, а не трейсбеком из build_jobs."""
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["Мурзик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character",
+          "рыжий кот, без канонического блока", status="approved")
+    problems = stage_gate(p, "storyboard", "ep01")
+    assert any("canonical:appearance" in x for x in problems), problems
