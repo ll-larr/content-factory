@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from factory.artifact import Artifact, load_artifact
+from factory.artifact import Artifact, ArtifactError, load_artifact
 
 # Карта зависимостей по kind — фиксированная, а не свободный список: иначе два
 # запуска approve дали бы разный depends_on и проверка устаревания стала бы
@@ -39,7 +39,15 @@ def dependencies(project_dir: Path, art: Artifact) -> list[Path]:
     if kind == "character":
         name = art.meta.get("name") or art.path.stem
         for script in sorted((project_dir / "episodes").glob("*/script.md")):
-            if name in load_artifact(script).body:
+            try:
+                body = load_artifact(script).body
+            except (ArtifactError, OSError):
+                # Сценарий существует, но не разбирается (например нет frontmatter) —
+                # понять, упомянут ли в нём персонаж, невозможно, поэтому молча
+                # пропускаем. Сам этот сценарий всё равно будет отбит гейтом
+                # собственного этапа, когда до него дойдут напрямую.
+                continue
+            if name in body:
                 deps.append(script)
     return deps
 
@@ -58,6 +66,15 @@ def artifact_state(project_dir: Path, path: Path) -> str:
         dep_path = project_dir / dep["path"]
         if not dep_path.exists():
             return "stale_deps"
-        if load_artifact(dep_path).sha != dep["sha"]:
+        try:
+            dep_sha = load_artifact(dep_path).sha
+        except (ArtifactError, OSError):
+            # Зависимость есть на диске, но не разбирается (битый/чужой frontmatter) —
+            # у контракта artifact_state нет состояния "ошибка", а подтвердить, что
+            # основание не изменилось, мы не можем. Значит не вправе звать это
+            # approved: та же логика, что и для удалённой зависимости выше, поэтому
+            # тот же исход — stale_deps, а не отдельное "broken".
+            return "stale_deps"
+        if dep_sha != dep["sha"]:
             return "stale_deps"
     return "approved"

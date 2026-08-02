@@ -65,6 +65,15 @@ def test_stale_deps_when_dependency_deleted(proj):
     assert artifact_state(proj, arc) == "stale_deps"
 
 
+def test_stale_deps_when_dependency_is_unparseable(proj):
+    arc = proj / "bible" / "season-arc.md"
+    write(arc, "season-arc", "сюжет", status="approved",
+          depends_on=[{"path": "bible/idea.md", "sha": body_sha("идея")}])
+    idea = proj / "bible" / "idea.md"
+    idea.write_text("просто текст, без YAML-frontmatter\n", encoding="utf-8")
+    assert artifact_state(proj, arc) == "stale_deps"
+
+
 def test_dependencies_of_script(proj):
     art = write(proj / "episodes" / "ep01" / "script.md", "script", "сценарий")
     assert [p.name for p in dependencies(proj, art)] == ["idea.md", "season-arc.md"]
@@ -78,6 +87,18 @@ def test_dependencies_of_character_include_scripts_mentioning_it(proj):
     assert any("ep01/script.md" in g for g in got)
     assert not any("ep02/script.md" in g for g in got), \
         "Барсик не упомянут — сценарий ep02 не зависимость Мурзика"
+
+
+def test_dependencies_of_character_skips_unparseable_script(proj):
+    broken = proj / "episodes" / "ep01" / "script.md"
+    broken.parent.mkdir(parents=True)
+    broken.write_text("Мурзик жмёт кнопку, но файл без frontmatter\n", encoding="utf-8")
+    write(proj / "episodes" / "ep02" / "script.md", "script", "Мурзик жмёт кнопку")
+    art = write(proj / "bible" / "characters" / "Мурзик.md", "character", "рыжий кот")
+    got = [p.as_posix() for p in dependencies(proj, art)]
+    assert not any("ep01/script.md" in g for g in got), \
+        "битый сценарий (без frontmatter) пропущен, а не роняет dependencies()"
+    assert any("ep02/script.md" in g for g in got)
 
 
 def test_dependencies_of_idea_is_empty(proj):
