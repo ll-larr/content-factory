@@ -1,25 +1,31 @@
 """CLI пре-продакшна: состояние проекта, гейты, одобрения (спека 2026-08-02 §6).
 
 Запускать из корня репозитория:
-  python scripts/factory.py status  --project projects/pilot
-  python scripts/factory.py next    --project projects/pilot
-  python scripts/factory.py check   --project projects/pilot --stage script --episode ep01
-  python scripts/factory.py approve --project projects/pilot bible/idea.md
+  python scripts/factory.py status   --project projects/pilot
+  python scripts/factory.py next     --project projects/pilot
+  python scripts/factory.py check    --project projects/pilot --stage script --episode ep01
+  python scripts/factory.py approve  --project projects/pilot bible/idea.md
+  python scripts/factory.py feedback --project projects/pilot bible/idea.md --state recorded
+  python scripts/factory.py diff     --project projects/pilot bible/idea.md
+  python scripts/factory.py budget   --project projects/pilot --estimate 3.0
 
-Коды выхода: 0 успех; 1 ошибка данных; 3 гейт закрыт.
+Коды выхода: 0 успех; 1 ошибка данных; 3 гейт закрыт (в т.ч. потолок budget_usd).
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from factory.artifact import Artifact, ArtifactError, load_artifact, save_artifact
-from factory.preprod import (artifact_state, dependencies, episode_ids,
-                             next_stage, stage_gate)
+from factory.manifest import Manifest
+from factory.preprod import (FEEDBACK_STATES, artifact_state, dependencies,
+                             episode_ids, feedback_state, next_stage, stage_gate)
 
 # Артефакты, которые создаёт init. Персонажи не скаффолдятся: их состав известен
 # только после сценария.
@@ -54,9 +60,11 @@ def cmd_init(project_dir: Path) -> int:
 
 
 def cmd_status(project_dir: Path) -> int:
+    print(f"{'артефакт':34} {'состояние':12} feedback")
     for path in _project_artifacts(project_dir):
         rel = path.relative_to(project_dir).as_posix()
-        print(f"{rel:34} {artifact_state(project_dir, path)}")
+        print(f"{rel:34} {artifact_state(project_dir, path):12} "
+              f"{feedback_state(path)}")
     return 0
 
 
@@ -136,6 +144,61 @@ def cmd_approve(project_dir: Path, rel: str) -> int:
     return 0
 
 
+def cmd_feedback(project_dir: Path, rel: str, state: str) -> int:
+    if state not in FEEDBACK_STATES:
+        print(f"неизвестное состояние {state!r}; известны {list(FEEDBACK_STATES)}")
+        return 1
+    path = project_dir / rel
+    if not path.exists():
+        print(f"нет файла {rel}")
+        return 1
+    art = load_artifact(path)
+    art.meta["feedback"] = state
+    save_artifact(art)
+    print(f"{rel}: feedback={state}")
+    return 0
+
+
+def cmd_diff(project_dir: Path, rel: str) -> int:
+    """Что человек изменил с момента генерации. Базовая версия — последний коммит
+    файла: скилл коммитит артефакт сразу после записи (спека §11)."""
+    path = project_dir / rel
+    if not path.exists():
+        print(f"нет файла {rel}")
+        return 1
+    result = subprocess.run(["git", "log", "-1", "--format=%H", "--", str(path)],
+                            capture_output=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0 or not result.stdout.strip():
+        print(f"{rel}: нет базовой версии в git — сравнивать не с чем")
+        return 0
+    diff = subprocess.run(["git", "diff", "HEAD", "--", str(path)],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    print(diff.stdout or f"{rel}: правок с момента коммита нет")
+    return 0
+
+
+def cmd_budget(project_dir: Path, estimate: float) -> int:
+    """Влезает ли смета в остаток budget_usd. Только для autonomy: full — в
+    остальных режимах трату подтверждает человек, потолок не нужен."""
+    data = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    if data.get("autonomy") != "full":
+        print("режим не full — потолок бюджета не применяется")
+        return 0
+    budget = data.get("budget_usd")
+    if budget is None:
+        print("autonomy: full требует budget_usd в project.json")
+        return 1
+    manifest_path = project_dir / "manifest.json"
+    spent = Manifest(manifest_path).credits_total() if manifest_path.exists() else 0.0
+    remainder = float(budget) - spent
+    if estimate > remainder:
+        print(f"БЮДЖЕТ ИСЧЕРПАН: смета ${estimate:.4f} > остаток ${remainder:.4f} "
+              f"(потолок ${float(budget):.2f}, потрачено ${spent:.4f})")
+        return 3
+    print(f"в бюджете: смета ${estimate:.4f}, остаток ${remainder:.4f}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -148,6 +211,16 @@ def main(argv=None) -> int:
     approve = sub.add_parser("approve")
     approve.add_argument("--project", required=True)
     approve.add_argument("artifact")
+    fb = sub.add_parser("feedback")
+    fb.add_argument("--project", required=True)
+    fb.add_argument("artifact")
+    fb.add_argument("--state", required=True)
+    df = sub.add_parser("diff")
+    df.add_argument("--project", required=True)
+    df.add_argument("artifact")
+    bg = sub.add_parser("budget")
+    bg.add_argument("--project", required=True)
+    bg.add_argument("--estimate", type=float, required=True)
 
     args = ap.parse_args(argv)
     project_dir = Path(args.project)
@@ -163,6 +236,12 @@ def main(argv=None) -> int:
         return cmd_next(project_dir)
     if args.cmd == "check":
         return cmd_check(project_dir, args.stage, args.episode)
+    if args.cmd == "feedback":
+        return cmd_feedback(project_dir, args.artifact, args.state)
+    if args.cmd == "diff":
+        return cmd_diff(project_dir, args.artifact)
+    if args.cmd == "budget":
+        return cmd_budget(project_dir, args.estimate)
     return cmd_approve(project_dir, args.artifact)
 
 

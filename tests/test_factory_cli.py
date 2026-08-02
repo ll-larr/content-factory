@@ -166,3 +166,84 @@ def test_status_survives_broken_artifact(proj, capsys):
     (proj / "bible" / "idea.md").write_text("текст без frontmatter\n", encoding="utf-8")
     assert run("status", "--project", proj) == 0
     assert "broken" in capsys.readouterr().out
+
+
+def test_feedback_defaults_to_none(proj):
+    run("init", "--project", proj)
+    from factory.preprod import feedback_state
+    assert feedback_state(proj / "bible" / "idea.md") == "none"
+
+
+def test_status_shows_feedback_column(proj, capsys):
+    run("init", "--project", proj)
+    run("status", "--project", proj)
+    out = capsys.readouterr().out
+    assert "feedback" in out
+    assert "none" in out
+
+
+def test_feedback_set_records_state(proj):
+    run("init", "--project", proj)
+    assert run("feedback", "--project", proj, "bible/idea.md", "--state", "recorded") == 0
+    from factory.preprod import feedback_state
+    assert feedback_state(proj / "bible" / "idea.md") == "recorded"
+
+
+def test_feedback_rejects_unknown_state(proj):
+    run("init", "--project", proj)
+    assert run("feedback", "--project", proj, "bible/idea.md", "--state", "great") == 1
+
+
+def test_diff_reports_no_baseline_when_never_committed(proj, capsys):
+    run("init", "--project", proj)
+    assert run("diff", "--project", proj, "bible/idea.md") == 0
+    assert "нет базовой версии" in capsys.readouterr().out
+
+
+def test_budget_allows_estimate_within_remainder(proj):
+    (proj / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
+        "episodes": 1, "episode_duration_sec": 10,
+        "autonomy": "full", "budget_usd": 10,
+    }), encoding="utf-8")
+    assert run("budget", "--project", proj, "--estimate", "3.0") == 0
+
+
+def test_budget_blocks_estimate_over_remainder(proj, capsys):
+    (proj / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
+        "episodes": 1, "episode_duration_sec": 10,
+        "autonomy": "full", "budget_usd": 1,
+    }), encoding="utf-8")
+    assert run("budget", "--project", proj, "--estimate", "3.0") == 3
+    # Регистр сравниваем без учёта регистра: репо стабильно использует ЗАГЛАВНЫЕ
+    # буквы для тревожных сообщений (ГЕЙТ ЗАКРЫТ, ЛИМИТ ОТКЛОНЕНИЙ ИСЧЕРПАН —
+    # scripts/factory.py, scripts/generate_batch.py), а не то, что дал брифовый
+    # эталон дословно; смысл проверки — что сообщение вообще упоминает бюджет.
+    assert "бюджет" in capsys.readouterr().out.lower()
+
+
+def test_budget_counts_already_spent(proj):
+    (proj / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
+        "episodes": 1, "episode_duration_sec": 10,
+        "autonomy": "full", "budget_usd": 5,
+    }), encoding="utf-8")
+    from factory.manifest import Manifest
+    m = Manifest(proj / "manifest.json")
+    m.add("ep01/storyboard/001", kind="frame")
+    # Манифест разрешает только pending -> generating -> generated (factory/manifest.py
+    # ALLOWED); брифовый эталон прыгал прямо в generated и падал ManifestError.
+    m.set_status("ep01/storyboard/001", "generating")
+    m.set_status("ep01/storyboard/001", "generated", credits_spent=4.5)
+    m.save()
+    assert run("budget", "--project", proj, "--estimate", "1.0") == 3
+
+
+def test_budget_requires_budget_usd_in_full_mode(proj, capsys):
+    (proj / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
+        "episodes": 1, "episode_duration_sec": 10, "autonomy": "full",
+    }), encoding="utf-8")
+    assert run("budget", "--project", proj, "--estimate", "0.1") == 1
+    assert "budget_usd" in capsys.readouterr().out

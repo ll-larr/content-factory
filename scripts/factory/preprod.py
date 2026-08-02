@@ -181,6 +181,29 @@ def _cast_problems(project_dir: Path, episode: str) -> list[str]:
     return problems
 
 
+FEEDBACK_STATES = ("none", "pending", "recorded")
+
+
+def feedback_state(path: Path) -> str:
+    """none — оценки не было и правок не было; это «неизвестно», а не «хорошо».
+    pending — человек правил, причина не разобрана. recorded — правило записано
+    в bible/craft-notes.md (спека §11).
+
+    Файл, которого нет, и файл с битым frontmatter трактуются одинаково — «none»:
+    и там, и там оценивать нечего, а про битый файл отдельно сообщает колонка
+    artifact_state. Без этой защиты cmd_status падал бы трейсбеком на каждом
+    broken-артефакте вместо строки "broken" (регрессия найдена на существующем
+    тесте test_status_survives_broken_artifact)."""
+    path = Path(path)
+    if not path.exists():
+        return "none"
+    try:
+        value = load_artifact(path).meta.get("feedback", "none")
+    except (ArtifactError, OSError):
+        return "none"
+    return value if value in FEEDBACK_STATES else "none"
+
+
 def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
     """Первый незакрытый шаг. Порядок: story, затем эпизоды ПО ПОРЯДКУ, в каждом
     script → characters → storyboard (спека §7: автономный режим идёт по всем)."""
