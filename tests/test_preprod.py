@@ -19,6 +19,7 @@ def write(path, kind, body, status="draft", **extra):
 
 
 CHAR_BODY = "<!-- canonical:appearance -->orange cat<!-- /canonical:appearance -->"
+STYLE_BODY = "<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"
 
 
 @pytest.fixture
@@ -220,10 +221,13 @@ def test_next_stage_none_when_nothing_left(tmp_path):
 # --- Находка ревью: персонаж, введённый в поздней серии, проходил гейт без карточки ---
 
 def _closed_story(p):
-    """Одобрить story-артефакты, чтобы дойти до поэпизодных гейтов."""
-    for rel, kind in (("bible/idea.md", "idea"), ("bible/season-arc.md", "season-arc"),
-                      ("bible/style-guide.md", "style-guide")):
-        write(p / rel, kind, "текст", status="approved")
+    """Одобрить story-артефакты, чтобы дойти до поэпизодных гейтов.
+
+    Стайл-гайд несёт канонический блок: гейт storyboard его проверяет — без блока
+    разворачивать {{style}} в промпте кадра нечем."""
+    write(p / "bible/idea.md", "idea", "текст", status="approved")
+    write(p / "bible/season-arc.md", "season-arc", "текст", status="approved")
+    write(p / "bible/style-guide.md", "style-guide", STYLE_BODY, status="approved")
 
 
 def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
@@ -308,3 +312,16 @@ def test_cast_gate_flags_card_without_canonical_appearance(tmp_path):
           "рыжий кот, без канонического блока", status="approved")
     problems = stage_gate(p, "storyboard", "ep01")
     assert any("canonical:appearance" in x for x in problems), problems
+
+
+def test_storyboard_gate_flags_style_guide_without_canonical_block(tmp_path):
+    """Симметрия с персонажами: без canonical:style разворачивать {{style}} нечем,
+    и expand_prompt упал бы уже на платной стадии."""
+    p = make_project(tmp_path, episodes=1)
+    write(p / "bible" / "idea.md", "idea", "идея", status="approved")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    write(p / "bible" / "style-guide.md", "style-guide", "стиль без блока",
+          status="approved")
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
+    problems = stage_gate(p, "storyboard", "ep01")
+    assert any("canonical:style" in x for x in problems), problems

@@ -159,6 +159,17 @@ def stage_gate(project_dir: Path, stage: str, episode: str | None = None) -> lis
     # героя (находка ревью задачи 3).
     if stage in ("characters", "storyboard") and episode is not None:
         problems += _cast_problems(project_dir, episode)
+
+    # Симметрично проверке canonical:appearance у персонажей: без блока
+    # canonical:style разворачивать {{style}} нечем, и expand_prompt упал бы
+    # трейсбеком уже на платной стадии, а не гейтом до сметы.
+    if stage == "storyboard":
+        guide = project_dir / "bible" / "style-guide.md"
+        if artifact_state(project_dir, guide) == "approved" \
+                and not has_canonical(guide, "style"):
+            problems.append(
+                "bible/style-guide.md: нет блока <!-- canonical:style --> — "
+                "промпт кадра нечем разворачивать")
     return problems
 
 

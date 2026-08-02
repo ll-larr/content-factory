@@ -53,13 +53,10 @@
 - `bible/craft-notes.md` — свод правил по ремеслу проекта, читается каждой творческой
   стадией. Молчание пользователя не считается одобрением: `feedback: none` означает
   «неизвестно».
-- Гейт этапа `storyboard` проверяет канонический блок (`canonical:appearance`) только у
-  карточек персонажей (`factory/preprod._cast_problems`) — для `bible/style-guide.md` и
-  его блока `canonical:style` эквивалентной проверки в `stage_gate` НЕТ. Отсутствие блока
-  не ловится кодом гейта и не даёт кода 2/3: `expand_prompt` падает необработанным
-  `PromptError` уже при развороте промпта в `generate_batch.py`, на платной стадии.
-  Скиллы `factory-story`/`factory-storyboard` компенсируют это вручную (см. их SKILL.md);
-  чинить в коде — отдельная задача, не в скоупе фазы 3.
+- Гейт этапа `storyboard` проверяет наличие канонических блоков ДО сметы: и
+  `canonical:appearance` у каждой карточки персонажа состава серии, и `canonical:style`
+  у `bible/style-guide.md`. Без блока разворачивать плейсхолдер нечем, и раньше
+  `expand_prompt` падал необработанным `PromptError` уже на платной стадии.
 - Скиллы этапов пре-продакшна и драйвер автономного режима — `.claude/skills/factory*/
   SKILL.md` (спека 2026-08-02 §6–§11): `/factory-research`, `/factory-story`,
   `/factory-script`, `/factory-characters`, `/factory-storyboard` — по этапу;
