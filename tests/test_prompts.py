@@ -79,3 +79,17 @@ def test_problems_flags_unapproved_character(proj):
     problems = prompt_problems("{{style}} {{char:murzik}} sits", proj,
                                ["bible/characters/murzik-ref.png"])
     assert any("не одобрен" in p for p in problems)
+
+
+def test_empty_character_name_is_flagged(proj):
+    """{{char:}} узкий regex не видит вовсе — без отдельной проверки такой текст
+    уехал бы провайдеру буквально."""
+    problems = prompt_problems("{{style}} {{char:}} sits", proj, [])
+    assert any("char:" in p for p in problems), problems
+
+
+def test_style_with_argument_is_flagged_by_gate(proj):
+    """{{style:foo}} раньше проходил гейт и падал уже в expand_prompt — то есть
+    после того, как смета показана человеку."""
+    problems = prompt_problems("{{style:foo}} cat", proj, [])
+    assert any("не принимает аргумент" in p for p in problems), problems

@@ -57,18 +57,37 @@ def expand_prompt(prompt: str, project_dir: Path) -> str:
     return _PLACEHOLDER.sub(replace, prompt)
 
 
+def leftover_braces(prompt: str) -> list[str]:
+    """Куски вида {{...}}, которые НЕ распознаны как плейсхолдер.
+
+    Отдельная проверка нужна потому, что `_PLACEHOLDER` намеренно узкий: `{{char:}}`
+    с пустым именем или `{{ Style }}` он просто не увидит, и без этой проверки такой
+    текст молча уехал бы провайдеру буквально — оплаченный кадр с фигурными скобками
+    вместо описания персонажа.
+    """
+    stripped = _PLACEHOLDER.sub("", prompt)
+    return re.findall(r"\{\{[^}]*\}\}", stripped)
+
+
 def prompt_problems(prompt: str, project_dir: Path, refs: list[str]) -> list[str]:
     """Проверки гейта раскадровки. Пустой список = промпт годен."""
     project_dir = Path(project_dir)
     problems: list[str] = []
     found = _PLACEHOLDER.findall(prompt)
 
-    if not any(kind == "style" for kind, _ in found):
+    if not any(kind == "style" and not arg for kind, arg in found):
         problems.append("в промпте нет {{style}}")
+
+    for junk in leftover_braces(prompt):
+        problems.append(f"нераспознанный плейсхолдер {junk!r}")
 
     refs_joined = " ".join(refs)
     for kind, arg in found:
         if kind == "style":
+            # {{style}} аргумента не принимает; {{style:foo}} прошёл бы гейт и упал
+            # уже в expand_prompt — то есть после того, как смета показана человеку.
+            if arg:
+                problems.append(f"плейсхолдер {{{{style}}}} не принимает аргумент: {arg!r}")
             continue
         if kind != "char" or not arg:
             problems.append(f"неизвестный плейсхолдер {{{{{kind}}}}}")

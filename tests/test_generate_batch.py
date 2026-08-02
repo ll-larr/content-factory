@@ -547,3 +547,23 @@ def test_storyboard_expands_placeholders_and_records_sent_prompt(proj, monkeypat
 
     m = Manifest(proj / "manifest.json")
     assert m.get("ep01/storyboard/001")["prompt_sent"] == "flat 2D cartoon cat on a fence"
+
+
+def test_segments_reject_stray_placeholder(proj, monkeypatch):
+    """Отрезки плейсхолдеры не разворачивают, поэтому {{style}} в промпте движения
+    уехал бы провайдеру буквально и оплатился мусором. Отбиваем до сметы."""
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["segments"][0]["prompt"] = "{{style}} cat walks"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+    m = Manifest(proj / "manifest.json")
+    for n in (1, 2, 3):
+        item_id = f"ep01/storyboard/{n:03d}"
+        m.add(item_id, kind="frame")
+        m.set_status(item_id, "generated")
+        m.set_status(item_id, "done")
+    m.save()
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "segments") == 2
+    assert fp.submitted == [], "до провайдера дойти не должно"

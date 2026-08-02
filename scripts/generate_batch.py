@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from factory.prompts import expand_prompt, prompt_problems
 from factory.providers import get_provider
 from factory.providers.base import ProviderError
 from factory.shots import frame_path, load_shots, segment_path
+
+_PLACEHOLDER_ANY = re.compile(r"\{\{[^}]*\}\}")
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
 
@@ -142,6 +145,21 @@ def main(argv=None) -> int:
             for frame_id in sorted(frame_problems):
                 print(f"  - {frame_id}: {frame_problems[frame_id]}")
             return 3
+
+        # Промпты движения плейсхолдеры НЕ разворачивают: композицию задают кадры,
+        # описывать в отрезке внешность заново незачем. Но раз не разворачивают —
+        # случайно вписанный {{style}} уехал бы провайдеру буквально и оплатился
+        # мусором. Отбиваем до сметы (ревью-находка задачи 5).
+        stray = []
+        for s in shots["segments"]:
+            for junk in _PLACEHOLDER_ANY.findall(s["prompt"]):
+                stray.append(f"отрезок {s['n']:03d}: {junk!r}")
+        if stray:
+            print("ПЛЕЙСХОЛДЕРЫ В ПРОМПТЕ ДВИЖЕНИЯ — генерация не запущена "
+                  "(отрезки их не разворачивают):")
+            for p in stray:
+                print(f"  - {p}")
+            return 2
     else:
         provider_name = project.image_provider
         # Гейт трат раскадровки (симметрично video): валидация image-модели под
