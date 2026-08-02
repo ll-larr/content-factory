@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from factory.artifact import Artifact, ArtifactError, load_artifact
@@ -78,3 +79,78 @@ def artifact_state(project_dir: Path, path: Path) -> str:
         if dep_sha != dep["sha"]:
             return "stale_deps"
     return "approved"
+
+
+STAGES = ("research", "story", "script", "characters", "storyboard")
+
+# Что каждый этап требует одобренным. {ep} подставляется номером эпизода.
+STAGE_REQUIRES: dict[str, list[str]] = {
+    "research": [],
+    "story": [],
+    "script": ["bible/idea.md", "bible/season-arc.md"],
+    "characters": ["episodes/{ep}/script.md"],
+    "storyboard": ["episodes/{ep}/script.md", "bible/style-guide.md"],
+}
+
+_STATE_MESSAGE = {
+    "missing": "не существует",
+    "draft": "не одобрен (status: draft)",
+    "stale_self": "изменён после одобрения — перечитай и одобри заново",
+    "stale_deps": "устарел: изменился файл, на который он опирался",
+}
+
+
+def episode_ids(project_dir: Path) -> list[str]:
+    """ep01..epNN по полю episodes из project.json; для типов без серий — ['ep01']."""
+    data = json.loads((Path(project_dir) / "project.json").read_text(encoding="utf-8"))
+    count = int(data.get("episodes", 1) or 1)
+    return [f"ep{i:02d}" for i in range(1, count + 1)]
+
+
+def stage_gate(project_dir: Path, stage: str, episode: str | None = None) -> list[str]:
+    """Пустой список = этап можно запускать. Иначе — по строке на каждую причину."""
+    project_dir = Path(project_dir)
+    if stage not in STAGES:
+        return [f"неизвестный этап {stage!r}; известны {list(STAGES)}"]
+
+    problems: list[str] = []
+    for template in STAGE_REQUIRES[stage]:
+        if "{ep}" in template and episode is None:
+            problems.append(f"этап {stage} требует --episode")
+            continue
+        rel = template.format(ep=episode)
+        state = artifact_state(project_dir, project_dir / rel)
+        if state != "approved":
+            problems.append(f"{rel}: {_STATE_MESSAGE[state]}")
+
+    if stage == "storyboard":
+        chars = sorted((project_dir / "bible" / "characters").glob("*.md"))
+        if not chars:
+            problems.append("bible/characters/: нет ни одной карточки персонажа")
+        for card in chars:
+            state = artifact_state(project_dir, card)
+            if state != "approved":
+                rel = card.relative_to(project_dir).as_posix()
+                problems.append(f"{rel}: {_STATE_MESSAGE[state]}")
+    return problems
+
+
+def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
+    """Первый незакрытый шаг. Порядок: story, затем эпизоды ПО ПОРЯДКУ, в каждом
+    script → characters → storyboard (спека §7: автономный режим идёт по всем)."""
+    project_dir = Path(project_dir)
+    story_done = all(
+        artifact_state(project_dir, project_dir / rel) == "approved"
+        for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md"))
+    if not story_done:
+        return ("story", None)
+
+    for ep in episode_ids(project_dir):
+        if artifact_state(project_dir, project_dir / f"episodes/{ep}/script.md") != "approved":
+            return ("script", ep)
+        chars = sorted((project_dir / "bible" / "characters").glob("*.md"))
+        if not chars or any(artifact_state(project_dir, c) != "approved" for c in chars):
+            return ("characters", ep)
+        if not (project_dir / "episodes" / ep / "shots.json").exists():
+            return ("storyboard", ep)
+    return None

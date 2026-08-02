@@ -1,8 +1,11 @@
 """Тесты состояния артефактов и гейтов пре-продакшна (спека 2026-08-02 §5)."""
+import json
+
 import pytest
 
 from factory.artifact import Artifact, body_sha, load_artifact, save_artifact
 from factory.preprod import artifact_state, dependencies
+from factory.preprod import episode_ids, next_stage, stage_gate
 
 
 def write(path, kind, body, status="draft", **extra):
@@ -104,3 +107,91 @@ def test_dependencies_of_character_skips_unparseable_script(proj):
 def test_dependencies_of_idea_is_empty(proj):
     art = write(proj / "bible" / "idea.md", "idea", "идея")
     assert dependencies(proj, art) == []
+
+
+def make_project(tmp_path, episodes=2):
+    (tmp_path / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "space cats",
+        "audience": "6-9", "episodes": episodes, "episode_duration_sec": 10,
+    }), encoding="utf-8")
+    return tmp_path
+
+
+def test_episode_ids_from_project(tmp_path):
+    p = make_project(tmp_path, episodes=3)
+    assert episode_ids(p) == ["ep01", "ep02", "ep03"]
+
+
+def test_story_gate_open_on_fresh_project(tmp_path):
+    p = make_project(tmp_path)
+    assert stage_gate(p, "story") == []
+
+
+def test_script_gate_blocked_without_approved_story(tmp_path):
+    p = make_project(tmp_path)
+    problems = stage_gate(p, "script", "ep01")
+    assert len(problems) == 2
+    assert all("idea.md" in x or "season-arc.md" in x for x in problems)
+
+
+def test_script_gate_open_after_story_approved(tmp_path):
+    p = make_project(tmp_path)
+    write(p / "bible" / "idea.md", "idea", "идея", status="approved")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    assert stage_gate(p, "script", "ep01") == []
+
+
+def test_characters_gate_requires_approved_script(tmp_path):
+    p = make_project(tmp_path)
+    write(p / "bible" / "idea.md", "idea", "идея", status="approved")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    assert stage_gate(p, "characters", "ep01") != []
+    write(p / "episodes" / "ep01" / "script.md", "script", "текст", status="approved")
+    assert stage_gate(p, "characters", "ep01") == []
+
+
+def test_gate_reports_stale_differently_from_draft(tmp_path):
+    p = make_project(tmp_path)
+    idea = p / "bible" / "idea.md"
+    write(idea, "idea", "идея", status="approved")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    art = load_artifact(idea)
+    art.body = "переписал"
+    save_artifact(art)
+    problems = stage_gate(p, "script", "ep01")
+    assert any("изменён после одобрения" in x for x in problems)
+
+
+def test_next_stage_walks_all_episodes_in_order(tmp_path):
+    p = make_project(tmp_path, episodes=2)
+    assert next_stage(p) == ("story", None)
+
+    write(p / "bible" / "idea.md", "idea", "идея", status="approved")
+    write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
+    write(p / "bible" / "style-guide.md", "style-guide", "стиль", status="approved")
+    assert next_stage(p) == ("script", "ep01")
+
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
+    assert next_stage(p) == ("characters", "ep01")
+
+    # Дописано сверх брифа: в буквальном тексте теста резолвер ни разу не доходит
+    # до конца эпизода, поэтому переход ep01 -> ep02 остаётся недоказанным, хотя
+    # именно это (§7: "все эпизоды по порядку, не останавливаясь на первом") —
+    # ядро задачи. Закрываем разрыв: доводим ep01 до конца и проверяем, что
+    # резолвер продолжает со script следующего эпизода, а не останавливается.
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    assert next_stage(p) == ("storyboard", "ep01")
+
+    (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
+    assert next_stage(p) == ("script", "ep02")
+
+
+def test_next_stage_none_when_nothing_left(tmp_path):
+    p = make_project(tmp_path, episodes=1)
+    for rel, kind in (("bible/idea.md", "idea"), ("bible/season-arc.md", "season-arc"),
+                      ("bible/style-guide.md", "style-guide")):
+        write(p / rel, kind, "текст", status="approved")
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
+    assert next_stage(p) is None
