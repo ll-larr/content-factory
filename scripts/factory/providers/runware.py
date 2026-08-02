@@ -12,6 +12,29 @@ from factory.providers.base import BaseHTTPProvider, ProviderError
 
 _ENDPOINT = "https://api.runware.ai/v1"
 
+# Runware отклоняет строку resolution ("720p") — imageInference/videoInference хотят
+# целочисленные width/height. Подтверждено живьём 2026-08-01: imageInference для
+# flux_2_klein упал HTTP 400 missingDimensionParameters ДО создания задачи, $0
+# списано (knowledge/runware-api.md, «Спайк 2026-08-01»). Таблица — 16:9-база;
+# 9:16 получаем перестановкой сторон в submit().
+#
+# 720p = 1280x720: оба кратны 16 — FLUX.2 [klein] 9B (наш imageInference,
+# runware:400@2) требует width/height в диапазоне 128-2048 с шагом 16
+# (runware.ai/docs/models/bfl-flux-2-klein-9b.md, context7 2026-08-01); те же
+# 1280x720 — рабочий пример в доке Vidu Q2 Turbo (наш videoInference, vidu:3@2;
+# runware.ai/docs/models/vidu-q2-turbo/examples). Одна пара размеров закрывает
+# обе задачи этой карточки.
+#
+# 1080p сюда намеренно НЕ включён: для FLUX 2 Klein 9B высота 1080 не кратна 16
+# (1080/16 = 67.5) — валидного round-числа без искажения соотношения сторон нет,
+# а видео-модели (Vidu) такого ограничения в доках не декларируют вовсе — единой
+# пары размеров для обоих типов задач без отдельной живой проверки нет. Гадать
+# нечестно (см. правило проекта): пока resolution не в таблице — submit падает
+# явной ошибкой ниже, а не шлёт непроверенные px.
+_RESOLUTIONS = {
+    "720p": (1280, 720),
+}
+
 
 class RunwareError(ProviderError):
     """Ошибка Runware."""
@@ -20,6 +43,16 @@ class RunwareError(ProviderError):
 class RunwareProvider(BaseHTTPProvider):
     name = "runware"
     api_key_env = "RUNWARE_API_KEY"
+
+    def preflight_problems(self, model: str, params: dict) -> list[str]:
+        """Разрешение вне _RESOLUTIONS ловим ДО сметы, а не в submit — иначе
+        пользователь видит подтверждённую цену и весь батч падает в fail
+        (ревью-находка: смета не должна обещать то, что submit не выполнит)."""
+        resolution = params.get("resolution")
+        if resolution and resolution not in _RESOLUTIONS:
+            return [f"Runware: неизвестное resolution {resolution!r}; "
+                    f"замаплены только {sorted(_RESOLUTIONS)}"]
+        return []
 
     def submit(self, model: str, params: dict) -> str:
         card = self._card(model)
@@ -32,11 +65,26 @@ class RunwareProvider(BaseHTTPProvider):
             "model": air,
             "positivePrompt": params.get("prompt", ""),
             "includeCost": True,
+            # Без этого imageInference отдаёт результат ПРЯМО в ответе на сабмит
+            # (deliveryMethod по умолчанию sync для image, async для video), и
+            # наш submit→poll→download цикл поллит getResponse по уже закрытой
+            # задаче до таймаута. Просим async явно — одна ветка на оба типа.
+            # Подтверждено живьём 2026-08-01, см. knowledge/runware-api.md.
+            "deliveryMethod": "async",
         }
         if not is_image and params.get("duration") is not None:
             task["duration"] = params["duration"]
         if params.get("resolution"):
-            task["resolution"] = params["resolution"]
+            dims = _RESOLUTIONS.get(params["resolution"])
+            if dims is None:
+                raise RunwareError(
+                    f"неизвестное resolution {params['resolution']!r} для Runware; "
+                    f"замаплены только {sorted(_RESOLUTIONS)}")
+            width, height = dims
+            if params.get("aspect_ratio") == "9:16":
+                width, height = height, width
+            task["width"] = width
+            task["height"] = height
 
         frames = []
         if params.get("start_frame"):

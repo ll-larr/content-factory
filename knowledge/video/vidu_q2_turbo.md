@@ -2,7 +2,7 @@
 id: vidu_q2_turbo
 type: video
 family: vidu
-status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (5с 720p start→end, $0.20, интерполяция ✓); Runware НЕ проверен (баланс $0)
+status: verified          # WaveSpeed подтверждён живьём 2026-07-08 (5с 720p start→end, $0.20, интерполяция ✓); Runware подтверждён живьём 2026-08-01 (vidu:3@2, width/height 1280x720 + frameImages first/last → файл 1284x716 h264, 5.125с, $0.11 по полю cost) — на Runware та же генерация в ~1.8x дешевле, чем на WaveSpeed
 supports_start_end_frame: true
 native_audio: false
 providers:
@@ -11,7 +11,7 @@ providers:
     pricing: scaled
     res_mult: {720p: 1.0, 1080p: 2.25}
     id: "vidu:3@2"        # Vidu Q2 Turbo — реальный AIR (modelSearch 2026-06-17)
-    usd_per_sec: 0.021
+    usd_per_sec: 0.022    # живьём 2026-08-01: 5с 720p = $0.11 (cost), смета по прежним 0.021 давала $0.105 — расхождение 5%
   wavespeed:              # WaveSpeed v3 JSON: start-end-to-video-q2-turbo (живьём 2026-07-08)
     supports_start_end: true
     pricing: scaled

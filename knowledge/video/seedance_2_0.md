@@ -2,40 +2,58 @@
 id: seedance_2_0
 type: video
 family: seedance
-status: skeleton          # маппинг провайдеров не проверен живьём — блокирует трату до спайка
+status: verified          # WaveSpeed подтверждён живьём 2026-08-01 (bytedance/seedance-2.0-fast/image-to-video, 5с 720p start+end → файл 1280x720 h264 5.088с СО ЗВУКОМ aac, списано $0.90 по разнице балансов); Runware/OpenRouter НЕ проверены
 supports_start_end_frame: true
-native_audio: false
+native_audio: true        # живьём 2026-08-01: в выдаче есть aac-дорожка (прежнее false было ошибкой карточки)
 max_clip_seconds: 10
 aspect_ratios: ["auto","16:9","9:16","4:3","3:4","1:1","21:9"]
 cost_tier: high
 providers:
-  wavespeed:              # Seedance 2.0 Fast — дешевле всех (FINAL §3.2): $0.10/$0.14
+  wavespeed:              # Seedance 2.0 Fast; цены — в usd_per_sec/res_mult ниже (FINAL §3.2 с $0.10/$0.14 опровергнут живой пробой)
     supports_start_end: true
     pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 1.4}
+    res_mult: {720p: 1.0, 1080p: 2.5}   # из формулы каталога: множитель 720p=2, 1080p=5 → 2.5x (прежние 1.4 были догадкой)
     tiers:
-      fast: { id: "bytedance/seedance-2.0-fast/image-to-video", usd_per_sec: 0.10 }  # реальный path (/api/v3/models 2026-06-17)
+      fast: { id: "bytedance/seedance-2.0-fast/image-to-video", usd_per_sec: 0.20 }  # реальный path (/api/v3/models 2026-06-17); цена по формуле каталога 500000*2*duration/5 → $1.00 за 5с 720p = $0.20/с. Живьём 2026-08-01 списано $0.90 за 5с (на 10% меньше формулы) — берём формулу, чтобы смета не занижала. Прежние $0.10/с занижали вдвое
     default_tier: fast
-  runware:                # $0.13/$0.29 (×2.25)
-    supports_start_end: true
-    pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 2.25}
-    tiers:
-      fast: { id: "bytedance:seedance@2.0", usd_per_sec: 0.13 }
-    default_tier: fast
-  openrouter:             # id ✓; ⚠️ только 480p/720p; ⚠️ цена ТОКЕННАЯ (video_tokens), usd_per_sec НЕВЕРНА — сверить
-    supports_start_end: true
-    pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 2.25}
-    tiers:
-      std: { id: "bytedance/seedance-2.0-fast", usd_per_sec: 0.151 }
-    default_tier: std
+  # ⚠️ Блоки runware и openrouter ОТКЛЮЧЕНЫ (закомментированы) 2026-08-01.
+  # Причина: гейт трат карточного уровня — validate_video_model смотрит на общий
+  # status карточки, не на конкретного провайдера. Пока карточка была skeleton,
+  # это никого не пускало. После того как WaveSpeed подтверждён живьём и статус
+  # стал verified, эти два блока тоже стали «разрешёнными к тратам» — при том что
+  # цена в них НЕ подтверждена, а у openrouter прямо помечена как неверная
+  # (тарификация токенная, наша модель flat/scaled её не выражает). Живая проба
+  # WaveSpeed показала, что догадка по цене занижала вдвое — доверия к соседним
+  # догадкам это не добавляет.
+  # Пока блок закомментирован, validate_video_model отдаёт «not available on
+  # provider» и generate_batch выходит кодом 2 — трат не будет. Раскомментировать
+  # по одному, после живой генерации на этом провайдере, вместе с фактической ценой.
+  #
+  # runware:                # $0.13/$0.29 (×2.25) — ДОГАДКА, живьём не проверена
+  #   supports_start_end: true
+  #   pricing: scaled
+  #   res_mult: {720p: 1.0, 1080p: 2.25}
+  #   tiers:
+  #     fast: { id: "bytedance:seedance@2.0", usd_per_sec: 0.13 }   # AIR реальный (modelSearch 2026-06-17), цена — нет
+  #   default_tier: fast
+  # openrouter:             # id ✓ (GET /videos/models); ⚠️ только 480p/720p;
+  #                         # ⚠️ цена ТОКЕННАЯ (video_tokens) — usd_per_sec НЕВЕРЕН в принципе,
+  #                         #    наша модель flat/scaled токенную тарификацию не выражает
+  #   supports_start_end: true
+  #   pricing: scaled
+  #   res_mult: {720p: 1.0, 1080p: 2.25}
+  #   tiers:
+  #     std: { id: "bytedance/seedance-2.0-fast", usd_per_sec: 0.151 }
+  #   default_tier: std
 ---
 
 # Seedance 2.0 — качественная видеомодель (универсал: реализм + научпоп + 3D)
 
-> Провайдеры/цены — FINAL §3.2. Дефолт «фильм/сериал» на 720p (WaveSpeed Fast).
-> Точные model-path/AIR-id и 1080p-цены подтвердить первым боевым запуском.
+> Дефолт «фильм/сериал» на 720p (WaveSpeed Fast). WaveSpeed-путь подтверждён живой
+> генерацией 2026-08-01 — цены в providers-блоке пересчитаны по формуле каталога
+> `/api/v3/models`. Оценки FINAL §3.2 занижали: на 720p вдвое ($0.10 против $0.20/с),
+> на 1080p в ~3.6 раза ($0.14 против $0.50/с). 1080p взят из формулы, живой
+> генерацией НЕ проверен. Runware/OpenRouter не проверены.
 
 ## Когда использовать
 
@@ -78,5 +96,10 @@ providers:
 - **Start/end кадры:** поддержка подтверждена ✓
 - Цена — в providers-блоке (смета: `estimate_media_cost`, в $).
 
-**Ожидает живого спайка:** реальная интерполяция start→end, визуальное качество,
-сравнение с kling3_0 по стабильности персонажа.
+**Проверено живьём 2026-08-01:** интерполяция start→end отрабатывает, файл 1280x720
+h264 5.088с. Модель отдаёт **нативную aac-дорожку** — при сведении звука это надо
+учитывать (`mix_audio`/`assemble` получают отрезок, в котором уже есть аудиопоток).
+
+**Всё ещё ожидает проверки:** визуальное качество и сравнение с `kling3_0` по
+стабильности персонажа (субъективная оценка, живой генерацией не закрывается),
+1080p, Runware/OpenRouter-маппинги.

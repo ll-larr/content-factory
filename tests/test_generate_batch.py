@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import generate_batch as gb
+from factory.ffmpeg_tools import FfmpegError
 from factory.manifest import Manifest
 from factory.providers.base import ProviderError
 
@@ -81,6 +82,10 @@ class FakeProvider:
         self.submitted = []
         self.estimates = []
 
+    def preflight_problems(self, model, params):
+        """По умолчанию у фейка нечего проверять — как и у BaseHTTPProvider."""
+        return []
+
     def estimate(self, model, params):
         self.estimates.append((model, params))
         return 0.5
@@ -94,7 +99,7 @@ class FakeProvider:
 
     def download(self, job_id, dest):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
-        Path(dest).write_bytes(b"x")
+        Path(dest).write_bytes(b"\x89PNG\r\n\x1a\n")
         return Path(dest)
 
 
@@ -228,6 +233,39 @@ def test_model_not_on_provider_blocks_segments(proj, monkeypatch, capsys):
     (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
     assert run(proj, "segments") == 2
     assert "runware" in capsys.readouterr().out
+
+
+def test_provider_preflight_blocks_segments_before_estimate(proj, monkeypatch, capsys):
+    """Ревью-находка 1: смета не должна обещать цену, которую submit не может
+    выполнить (напр. Runware не умеет разрешение проекта). Хук провайдера
+    preflight_problems проверяется ДО сметы — до провайдера дело не доходит:
+    estimate() не считается, submit() не вызывается, код возврата 2 — тот же
+    путь, каким уже отбиваются карточки, не прошедшие валидацию."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(
+        fp, "preflight_problems",
+        lambda model, params: [f"{model}: неизвестное resolution {params.get('resolution')!r}"])
+    assert run(proj, "segments") == 2
+    assert fp.estimates == []
+    assert fp.submitted == []
+    out = capsys.readouterr().out
+    assert "НЕ ПРОШЛА ВАЛИДАЦИЮ" in out
+    assert "seedance_2_0" in out
+
+
+def test_provider_preflight_blocks_storyboard_before_estimate(proj, monkeypatch, capsys):
+    """Симметрично сегментам: preflight-хук провайдера блокирует раскадровку
+    ДО сметы, тем же кодом 2 и тем же форматом вывода."""
+    fp = fake_provider(monkeypatch)
+    monkeypatch.setattr(
+        fp, "preflight_problems",
+        lambda model, params: [f"{model}: неизвестное resolution {params.get('resolution')!r}"])
+    assert run(proj, "storyboard") == 2
+    assert fp.estimates == []
+    assert fp.submitted == []
+    out = capsys.readouterr().out
+    assert "НЕ ПРОШЛА ВАЛИДАЦИЮ" in out
+    assert "z_image" in out
 
 
 def test_provider_error_returns_to_pending(proj, monkeypatch):
@@ -424,3 +462,43 @@ def test_segments_blocked_when_frame_rejected(proj, monkeypatch, capsys):
     m.save()
     assert run(proj, "segments") == 3
     assert "статус rejected" in capsys.readouterr().out
+
+
+def test_ffmpeg_error_returns_to_pending_and_batch_continues(proj, monkeypatch):
+    """FfmpegError (сбой ensure_png, например неконвертируемые байты) — тот же
+    технический сбой, что ProviderError (спека §13): item -> pending, счётчик
+    fail растёт, а батч не прерывается — остальные элементы обрабатываются."""
+    fp = fake_provider(monkeypatch)
+    real_ensure_png = gb.ensure_png
+
+    def flaky_ensure_png(path):
+        if Path(path).name == "001.png":
+            raise FfmpegError("ffmpeg упал")
+        return real_ensure_png(path)
+
+    monkeypatch.setattr(gb, "ensure_png", flaky_ensure_png)
+    assert run(proj, "storyboard") == 1
+    assert len(fp.submitted) == 3  # батч не прервался — 002 и 003 тоже дошли
+
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["status"] == "pending"
+    assert m.get("ep01/storyboard/002")["status"] == "generated"
+    assert m.get("ep01/storyboard/003")["status"] == "generated"
+
+
+def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
+    """ensure_png зовётся на кадрах и не зовётся на отрезках (там .mp4)."""
+    calls = []
+    monkeypatch.setattr(gb, "ensure_png", lambda p: calls.append(Path(p)))
+    fake_provider(monkeypatch)
+    run(proj, "storyboard")
+    assert [p.name for p in calls] == ["001.png", "002.png", "003.png"]
+
+    m = Manifest(proj / "manifest.json")
+    for n in (1, 2, 3):
+        m.set_status(f"ep01/storyboard/{n:03d}", "done")
+    m.save()
+    calls.clear()
+    fake_provider(monkeypatch)
+    run(proj, "segments")
+    assert calls == []

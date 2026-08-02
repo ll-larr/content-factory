@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from factory.ffmpeg_tools import FfmpegError, ensure_png
 from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
@@ -27,6 +28,19 @@ from factory.providers.base import ProviderError
 from factory.shots import frame_path, load_shots, segment_path
 
 KNOWLEDGE_DIR = Path("knowledge")  # относительный путь — запуск из корня репо
+
+
+def _validation_gate(problems: list[str]) -> int:
+    """Единый вывод + код 2 для всех гейтов трат ДО сметы: и валидация карточки
+    (validate_video_model/validate_image_model), и провайдерский хук
+    (preflight_problems — ревью-находка: смета не должна обещать цену, которую
+    submit не может выполнить) используют один и тот же формат сообщения —
+    пользователь видит одинаковую картину независимо от того, какая именно
+    проверка остановила прогон."""
+    print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
+    for p in problems:
+        print(f"  - {p}")
+    return 2
 
 
 def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
@@ -83,16 +97,26 @@ def main(argv=None) -> int:
     shots = load_shots(episode_dir / "shots.json", project_dir)
     manifest = Manifest(project_dir / "manifest.json")
 
+    aspect = "9:16" if project.type == "shorts" else "16:9"
+
     if args.stage == "segments":
         provider_name = project.video_provider
         # Спека §6: валидация модели ПОД ВЫБРАННОГО провайдера ДО трат
         card = find_card(KNOWLEDGE_DIR, project.video_model)
         problems = validate_video_model(card, project.segment_seconds, provider_name)
         if problems:
-            print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
-            for p in problems:
-                print(f"  - {p}")
-            return 2
+            return _validation_gate(problems)
+
+        # Ревью-находка: смета не должна обещать цену, которую submit не
+        # выполнит (напр. Runware не умеет resolution проекта) — провайдерский
+        # хук проверяется здесь же, ДО сметы, тем же кодом 2.
+        provider = get_provider(provider_name, KNOWLEDGE_DIR)
+        problems = provider.preflight_problems(project.video_model, {
+            "resolution": project.resolution, "aspect_ratio": aspect,
+            "duration": project.segment_seconds, "tier": project.video_tier,
+        })
+        if problems:
+            return _validation_gate(problems)
 
         # Чекпоинт ревью (спека ревью §4.3): отрезки строятся только на
         # принятых кадрах — done или accepted_with_notes.
@@ -122,10 +146,16 @@ def main(argv=None) -> int:
         card = find_card(KNOWLEDGE_DIR, project.image_model)
         problems = validate_image_model(card, provider_name)
         if problems:
-            print("МОДЕЛЬ НЕ ПРОШЛА ВАЛИДАЦИЮ — генерация не запущена:")
-            for p in problems:
-                print(f"  - {p}")
-            return 2
+            return _validation_gate(problems)
+
+        # Ревью-находка, симметрично segments: провайдерский хук ДО сметы.
+        provider = get_provider(provider_name, KNOWLEDGE_DIR)
+        problems = provider.preflight_problems(project.image_model, {
+            "resolution": project.resolution, "aspect_ratio": aspect,
+            "tier": project.image_tier,
+        })
+        if problems:
+            return _validation_gate(problems)
 
     jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:
@@ -178,7 +208,7 @@ def main(argv=None) -> int:
             print("Всё уже сгенерировано — нечего делать.")
         return 0
 
-    provider = get_provider(provider_name, KNOWLEDGE_DIR)
+    # provider уже создан выше (рядом с preflight-хуком) — переиспользуем.
 
     # Спека §8 шаг 2: смета перед запуском (бесплатно, до трат)
     estimates = {j["item_id"]: provider.estimate(j["model"], j["params"])
@@ -203,13 +233,17 @@ def main(argv=None) -> int:
             job_id = provider.submit(j["model"], j["params"])
             provider.wait(job_id)
             provider.download(job_id, j["dest"])
+            if j["kind"] == "frame":
+                # провайдер может отдать JPEG под именем .png — нормализуем
+                ensure_png(j["dest"])
             manifest.set_status(
                 j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
-        except ProviderError as e:
-            # технический сбой -> вернуть в очередь (спека §13);
-            # если job_id известен — сохраняем для соотнесения с логами провайдера
+        except (ProviderError, FfmpegError) as e:
+            # технический сбой (провайдер или конвертация ensure_png) -> вернуть
+            # в очередь (спека §13); если job_id известен — сохраняем для
+            # соотнесения с логами провайдера
             extra = {"job_id": job_id} if job_id is not None else {}
             manifest.set_status(j["item_id"], "pending", **extra)
             print(f"  ! {j['item_id']}: {e}")

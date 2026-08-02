@@ -2,7 +2,7 @@
 id: seedance1_5
 type: video
 family: seedance
-status: skeleton          # маппинг провайдеров не проверен живьём — блокирует трату до спайка
+status: verified          # WaveSpeed подтверждён живьём 2026-08-01 (bytedance/seedance-v1.5-pro/image-to-video — id БЫЛ ДОГАДКОЙ, подтверждён; 4с 720p start+end → файл 1280x720 h264 4.05с со звуком aac, списано $0.21 по разнице балансов, смета обещала $0.20)
 supports_start_end_frame: true
 native_audio: true
 max_clip_seconds: 12
@@ -10,13 +10,13 @@ allowed_durations: [4, 8, 12]
 aspect_ratios: ["auto","16:9","9:16","4:3","3:4","1:1","21:9"]
 cost_tier: low
 providers:
-  wavespeed:              # Seedance 1.5 Pro — самая дешёвая со start/end; id/цена — ДОГАДКА, сверить спайком
+  wavespeed:              # Seedance 1.5 Pro — самая дешёвая со start/end; id и цена ПОДТВЕРЖДЕНЫ живьём 2026-08-01
     supports_start_end: true
     pricing: scaled
-    res_mult: {720p: 1.0, 1080p: 1.4}
+    res_mult: {720p: 1.0, 1080p: 2.0}   # из формулы каталога: 720p=1, 1080p=2 (прежние 1.4 были догадкой)
     allowed_durations: [4, 8, 12]
     tiers:
-      pro: { id: "bytedance/seedance-v1.5-pro/image-to-video", usd_per_sec: 0.05 }
+      pro: { id: "bytedance/seedance-v1.5-pro/image-to-video", usd_per_sec: 0.053 }  # формула каталога: duration*0.26/5*(generate_audio?1:0.5) → 4с со звуком = $0.208, но живьём списано $0.21 — округлено ВВЕРХ до 0.053 (4с = $0.212), чтобы смета не занижала фактическое списание
     default_tier: pro
   # Runware/OpenRouter — добавить после подтверждения хостинга/id/цены на спайке
 ---
@@ -35,6 +35,12 @@ providers:
 - `aspect_ratio` — `auto`, `16:9`, `9:16`, `4:3`, `3:4`, `1:1`, `21:9`
 - **Start/end кадры:** поддержка подтверждена ✓
 - Цена — в providers-блоке (смета: `estimate_media_cost`, в $).
+
+## Проверено живьём 2026-08-01 (WaveSpeed)
+
+4с 720p со start+end → 1280x720 h264, 4.05с, с нативной aac-дорожкой; списано $0.21
+против сметы $0.20. Путь `bytedance/seedance-v1.5-pro/image-to-video` был догадкой —
+подтверждён. НЕ проверены: 1080p, длительности 8/12с, Runware/OpenRouter.
 
 ## Наблюдения раннего теста (reference, до мультипровайдерного спайка)
 
