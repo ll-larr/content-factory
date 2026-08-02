@@ -730,6 +730,18 @@ def test_approve_records_dependency_hashes(proj):
     assert deps["bible/idea.md"] == load_artifact(proj / "bible" / "idea.md").sha
 
 
+def test_approve_refuses_when_dependency_missing(proj):
+    """Одобрять сценарий, у которого нет идеи, бессмысленно — и падать на этом
+    тоже нельзя (находка ревью задачи 2)."""
+    run("init", "--project", proj)
+    from factory.artifact import Artifact, save_artifact
+    save_artifact(Artifact(path=proj / "episodes" / "ep01" / "script.md",
+                           meta={"kind": "script", "status": "draft"},
+                           body="сценарий"))
+    (proj / "bible" / "idea.md").unlink()
+    assert run("approve", "--project", proj, "episodes/ep01/script.md") == 1
+
+
 def test_approve_refuses_missing_file(proj):
     run("init", "--project", proj)
     assert run("approve", "--project", proj, "bible/nope.md") == 1
@@ -882,10 +894,23 @@ def cmd_approve(project_dir: Path, rel: str) -> int:
     art.meta["approved_at"] = dt.datetime.now(dt.timezone.utc).isoformat(
         timespec="seconds")
     art.meta["content_sha"] = art.sha
+    # dependencies() возвращает ОБЪЯВЛЕННЫЕ зависимости, в том числе несуществующие:
+    # это сознательно, иначе порядок одобрения молча ломал бы depends_on. Здесь же
+    # несуществующая зависимость — повод отказать: одобрять артефакт, основание
+    # которого ещё не написано, бессмысленно (находка ревью задачи 2).
     deps = []
+    missing = []
     for dep in dependencies(project_dir, art):
-        deps.append({"path": dep.relative_to(project_dir).as_posix(),
-                     "sha": load_artifact(dep).sha})
+        rel_dep = dep.relative_to(project_dir).as_posix()
+        if not dep.exists():
+            missing.append(rel_dep)
+            continue
+        deps.append({"path": rel_dep, "sha": load_artifact(dep).sha})
+    if missing:
+        print(f"{rel}: нельзя одобрить — не существуют зависимости:")
+        for m in missing:
+            print(f"  - {m}")
+        return 1
     if deps:
         art.meta["depends_on"] = deps
     save_artifact(art)
@@ -935,11 +960,11 @@ if __name__ == "__main__":
 .\.venv\Scripts\python.exe -m pytest tests/test_factory_cli.py -q
 ```
 
-Ожидание: 9 passed.
+Ожидание: 10 passed.
 
 - [ ] **Шаг 6: Прогнать полный набор и закоммитить**
 
-Ожидание: **273 passed**.
+Ожидание: **274 passed**.
 
 ```bash
 git add scripts/factory.py tests/test_factory_cli.py tests/factory_cli_entry.py
