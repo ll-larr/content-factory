@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import generate_batch as gb
+from factory.artifact import Artifact, body_sha, save_artifact
 from factory.ffmpeg_tools import FfmpegError
 from factory.manifest import Manifest
 from factory.providers.base import ProviderError
@@ -41,6 +42,40 @@ def write_image_card(tmp_path):
     (idir / "z_image.md").write_text(IMAGE_CARD, encoding="utf-8")
 
 
+def write_script(project_dir, episode="ep01", characters=()):
+    """Одобренный сценарий эпизода: гейт storyboard (спека 2026-08-02 §5) требует
+    его наравне со стайл-гайдом, иначе раскадровка стартовала бы на неодобренном
+    тексте."""
+    body = "сценарий"
+    meta = {"kind": "script", "status": "approved", "content_sha": body_sha(body)}
+    if characters:
+        meta["characters"] = list(characters)
+    save_artifact(Artifact(path=project_dir / "episodes" / episode / "script.md",
+                           meta=meta, body=body))
+
+
+def write_style_guide(project_dir):
+    """Style-guide проекта с каноническим блоком: без него {{style}} в промптах
+    кадров не проходит ни гейт §10, ни expand_prompt. content_sha обязателен —
+    иначе artifact_state справедливо считает артефакт изменённым после одобрения."""
+    body = "<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"
+    save_artifact(Artifact(
+        path=project_dir / "bible" / "style-guide.md",
+        meta={"kind": "style-guide", "status": "approved",
+              "content_sha": body_sha(body)},
+        body=body))
+
+
+def write_character(project_dir, name):
+    """Одобренная карточка персонажа с каноническим блоком внешности."""
+    body = f"<!-- canonical:appearance -->orange cat {name}<!-- /canonical:appearance -->"
+    save_artifact(Artifact(
+        path=project_dir / "bible" / "characters" / f"{name}.md",
+        meta={"kind": "character", "status": "approved",
+              "content_sha": body_sha(body)},
+        body=body))
+
+
 @pytest.fixture
 def proj(tmp_path, monkeypatch):
     """Мини-проект: 3 кадра, 2 отрезка; CWD = tmp_path (как корень репо).
@@ -60,8 +95,8 @@ def proj(tmp_path, monkeypatch):
     }), encoding="utf-8")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
-        "frames": [{"n": 1, "prompt": "a"}, {"n": 2, "prompt": "b"},
-                   {"n": 3, "prompt": "c"}],
+        "frames": [{"n": 1, "prompt": "{{style}} a"}, {"n": 2, "prompt": "{{style}} b"},
+                   {"n": 3, "prompt": "{{style}} c"}],
         "segments": [
             {"n": 1, "start_frame": 1, "end_frame": 2, "prompt": "m1"},
             {"n": 2, "start_frame": 2, "end_frame": 3, "prompt": "m2"}],
@@ -70,6 +105,8 @@ def proj(tmp_path, monkeypatch):
     kdir.mkdir(parents=True)
     (kdir / "seedance_2_0.md").write_text(VIDEO_CARD, encoding="utf-8")
     write_image_card(tmp_path)
+    write_style_guide(pdir)
+    write_script(pdir)
     monkeypatch.chdir(tmp_path)
     return pdir
 
@@ -342,11 +379,13 @@ def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
     ref_file.write_bytes(b"x")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
-        "frames": [{"n": 1, "prompt": "a"},
-                   {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]}],
+        "frames": [{"n": 1, "prompt": "{{style}} a"},
+                   {"n": 2, "prompt": "{{style}} b", "refs": ["bible/ref.png"]}],
         "segments": [],
     }), encoding="utf-8")
     write_image_card(tmp_path)
+    write_style_guide(pdir)
+    write_script(pdir)
     monkeypatch.chdir(tmp_path)
     fp = fake_provider(monkeypatch)
     result = gb.main(["--project", str(pdir), "--episode", "ep01",
@@ -502,3 +541,202 @@ def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
     fake_provider(monkeypatch)
     run(proj, "segments")
     assert calls == []
+
+
+def test_storyboard_rejects_frame_without_style_placeholder(proj, monkeypatch):
+    """Кадр без {{style}} — потеря стиля на всю серию; отбиваем до трат."""
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["frames"][0]["prompt"] = "cat on a fence"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 2
+    assert fp.submitted == [], "до провайдера дойти не должно"
+
+
+def test_storyboard_expands_placeholders_and_records_sent_prompt(proj, monkeypatch):
+    """Провайдер получает развёрнутый текст, а манифест хранит то, что реально ушло."""
+    write_style_guide(proj)   # с content_sha: иначе гейт видит stale_self
+
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["frames"][0]["prompt"] = "{{style}} cat on a fence"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert fp.submitted[0]["prompt"] == "flat 2D cartoon cat on a fence"
+
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["prompt_sent"] == "flat 2D cartoon cat on a fence"
+
+
+def _character_card(proj, name, status="approved"):
+    """Карточка персонажа с каноническим блоком внешности.
+
+    Поправка задачи 6: версия хелпера из брифа не проставляла content_sha, из-за
+    чего artifact_state видел approved-карточку как stale_self (тело не совпадает
+    с хешем во frontmatter, которого там просто не было) и stage_gate("characters",
+    ...) её не пропускал — падал бы каждый тест этого блока. Хеш считаем так же,
+    как это делает tests/test_preprod.py.
+    """
+    body = f"<!-- canonical:appearance -->orange cat {name}<!-- /canonical:appearance -->"
+    meta = {"kind": "character", "status": status}
+    if status == "approved":
+        meta["content_sha"] = body_sha(body)
+    save_artifact(Artifact(path=proj / "bible" / "characters" / f"{name}.md",
+                           meta=meta, body=body))
+
+
+def _script(proj, episode, characters, body="сценарий"):
+    """Одобренный script.md с явно объявленным составом серии.
+
+    Поправка 1 задачи 6: stage_gate("characters"/"storyboard", ...) и гейт
+    непринятых референсов в generate_batch читают состав серии из поля
+    characters во frontmatter сценария (factory.preprod.episode_cast), а не по
+    факту наличия карточек в bible/characters/. Без этого поля тесты брифа не
+    объявляют состав и падают на собственном гейте — это то самое следствие
+    поправки, о котором предупреждает задание.
+    """
+    meta = {"kind": "script", "status": "approved", "characters": list(characters),
+            "content_sha": body_sha(body)}
+    save_artifact(Artifact(path=proj / "episodes" / episode / "script.md",
+                           meta=meta, body=body))
+
+
+def test_characters_stage_generates_one_ref_per_card(proj, monkeypatch):
+    _character_card(proj, "murzik")
+    _character_card(proj, "barsik")
+    _script(proj, "ep01", ["murzik", "barsik"])
+    fp = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "characters", "--yes"]) == 0
+    assert len(fp.submitted) == 2
+    m = Manifest(proj / "manifest.json")
+    assert m.get("bible/characters/murzik")["kind"] == "character_ref"
+    assert (proj / "bible" / "characters" / "murzik-ref.png").exists()
+
+
+def test_characters_stage_prompt_contains_appearance(proj, monkeypatch):
+    _character_card(proj, "murzik")
+    _script(proj, "ep01", ["murzik"])
+    fp = fake_provider(monkeypatch)
+    gb.main(["--project", str(proj), "--episode", "ep01",
+             "--stage", "characters", "--yes"])
+    assert "orange cat murzik" in fp.submitted[0]["prompt"]
+
+
+def test_characters_stage_blocked_without_cards(proj, monkeypatch):
+    """Состав объявлен, карточек нет — гейт закрыт. Пустой состав (заставка,
+    титры) законен и стадию не блокирует, поэтому объявляем персонажа явно."""
+    write_script(proj, characters=["murzik"])
+    """Ни сценария, ни карточек — гейт закрывает стадию через stage_gate
+    (episodes/ep01/script.md не существует), а не через литеральную проверку "нет
+    ни одной карточки" из брифа: та убрана поправкой 1, потому что серия без
+    персонажей (заставка, титры) — законный случай, который эта проверка
+    ломала бы."""
+    fp = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "characters", "--yes"]) == 3
+    assert fp.submitted == []  # заблокировано ДО сметы и трат
+
+
+def test_characters_stage_ignores_cards_outside_episode_cast(proj, monkeypatch):
+    """Поправка 2: референсы генерируются по составу ИМЕННО этой серии
+    (episode_cast), а не по всем карточкам bible/characters/ — иначе персонаж
+    другой серии оплатился бы заодно."""
+    _character_card(proj, "murzik")
+    _character_card(proj, "barsik")  # карточка есть, но не в составе ep01
+    _script(proj, "ep01", ["murzik"])
+    fp = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "characters", "--yes"]) == 0
+    assert len(fp.submitted) == 1
+    m = Manifest(proj / "manifest.json")
+    assert "bible/characters/barsik" not in m.data["items"]
+
+
+def test_characters_stage_normalizes_to_png(proj, monkeypatch):
+    """Референс — такой же скачанный файл, как кадр раскадровки: провайдер может
+    отдать не-PNG под именем .png (CLAUDE.md), поэтому ensure_png зовётся и для
+    character_ref, не только для frame."""
+    calls = []
+    monkeypatch.setattr(gb, "ensure_png", lambda p: calls.append(Path(p)))
+    _character_card(proj, "murzik")
+    _script(proj, "ep01", ["murzik"])
+    fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "characters", "--yes"]) == 0
+    assert calls == [proj / "bible" / "characters" / "murzik-ref.png"]
+
+
+def test_characters_stage_idle_after_acceptance(proj, monkeypatch):
+    """Повторный запуск после принятия референса ревью ничего не генерирует
+    заново: manifest.add идемпотентен (setdefault) — тот же механизм, что и для
+    кадров раскадровки."""
+    _character_card(proj, "murzik")
+    _script(proj, "ep01", ["murzik"])
+    fake_provider(monkeypatch)
+    gb.main(["--project", str(proj), "--episode", "ep01",
+             "--stage", "characters", "--yes"])
+    m = Manifest(proj / "manifest.json")
+    m.set_status("bible/characters/murzik", "done")
+    m.save()
+    fp2 = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "characters", "--yes"]) == 0
+    assert fp2.submitted == []
+
+
+def test_storyboard_blocked_until_character_refs_accepted(proj, monkeypatch):
+    """Кадры нельзя генерировать, пока референс персонажа не принят ревью."""
+    _character_card(proj, "murzik")
+    _script(proj, "ep01", ["murzik"])
+    fake_provider(monkeypatch)
+    gb.main(["--project", str(proj), "--episode", "ep01",
+             "--stage", "characters", "--yes"])
+    # референс сгенерирован, но не принят
+    fp2 = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "storyboard", "--yes"]) == 3
+    assert fp2.submitted == []  # до кадров дело не дошло — заблокировано раньше
+
+
+def test_storyboard_ignores_uncast_character_refs(proj, monkeypatch):
+    """Поправка 2: гейт storyboard проверяет референсы состава ИМЕННО этой серии
+    (episode_cast) — персонаж, не объявленный в сценарии серии, чей референс не
+    готов (или не существует вовсе), раскадровку не блокирует."""
+    _character_card(proj, "murzik")
+    _character_card(proj, "barsik")  # не в составе ep01
+    _script(proj, "ep01", ["murzik"])
+    fake_provider(monkeypatch)
+    gb.main(["--project", str(proj), "--episode", "ep01",
+             "--stage", "characters", "--yes"])
+    m = Manifest(proj / "manifest.json")
+    m.set_status("bible/characters/murzik", "done")
+    m.save()
+    fp2 = fake_provider(monkeypatch)
+    assert gb.main(["--project", str(proj), "--episode", "ep01",
+                    "--stage", "storyboard", "--yes"]) == 0
+
+
+def test_segments_reject_stray_placeholder(proj, monkeypatch):
+    """Отрезки плейсхолдеры не разворачивают, поэтому {{style}} в промпте движения
+    уехал бы провайдеру буквально и оплатился мусором. Отбиваем до сметы."""
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["segments"][0]["prompt"] = "{{style}} cat walks"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+    m = Manifest(proj / "manifest.json")
+    for n in (1, 2, 3):
+        item_id = f"ep01/storyboard/{n:03d}"
+        m.add(item_id, kind="frame")
+        for status in ("generating", "generated", "done"):
+            m.set_status(item_id, status)
+    m.save()
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "segments") == 2
+    assert fp.submitted == [], "до провайдера дойти не должно"

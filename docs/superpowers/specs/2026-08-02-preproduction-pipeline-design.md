@@ -85,6 +85,23 @@ depends_on:                               # чем этот артефакт б�
 `content_sha` считается по телу документа после закрывающего `---`, чтобы простановка
 `approved_at` не меняла хеш сама по себе.
 
+**Сценарий дополнительно объявляет состав серии:**
+
+```yaml
+kind: script
+characters: [Мурзик, Барсик]
+```
+
+Состав объявляется явно, а не выводится поиском имени по тексту. Поиск подстрокой врёт
+в обе стороны: «Мурзик смотрит на фотографию Барсика» записал бы Барсика в участники
+сцены, а персонажа, названного иначе, не нашёл бы вовсе. Тот же ход принят в §10 для
+промптов кадров. Сценарий без поля `characters` — пустой состав: серия без персонажей
+технически возможна (заставка, титры).
+
+Без этого поля гейт дырявый, и это проверено: персонаж, впервые появившийся во второй
+серии, проходил насквозь — карточки первой серии одобрены, значит «всё готово», и кадры
+второй уходили в платную генерацию без описания и референса нового героя.
+
 **Что во что входит `depends_on`** — фиксированная карта по `kind`, а не свободный
 список, иначе два запуска `approve` дадут разный результат:
 
@@ -94,7 +111,7 @@ depends_on:                               # чем этот артефакт б�
 | `idea` | — (опирается на `project.json`, он не артефакт) |
 | `season-arc` | `bible/idea.md` |
 | `style-guide` | `bible/idea.md` |
-| `character` | `bible/idea.md`, `bible/style-guide.md`, все `episodes/*/script.md`, где персонаж упомянут |
+| `character` | `bible/idea.md`, `bible/style-guide.md`, все `episodes/*/script.md`, объявившие персонажа в своём `characters` |
 | `script` | `bible/idea.md`, `bible/season-arc.md` |
 
 ## 5. Машина состояний и гейты
@@ -102,11 +119,14 @@ depends_on:                               # чем этот артефакт б�
 Модуль `scripts/factory/preprod.py`:
 
 ```python
-artifact_state(path) -> "missing" | "draft" | "approved" | "stale_self" | "stale_deps"
+artifact_state(path) -> "missing" | "broken" | "draft" | "approved" | "stale_self" | "stale_deps"
 stage_gate(project, stage, episode=None) -> list[str]     # пусто = можно
 next_stage(project) -> tuple[str, str | None]             # (stage, episode)
 ```
 
+- `broken` — файл есть, но не читается (битый frontmatter). Отдельное состояние ради
+  формулировки: сказать про такой файл «не одобрен (draft)» значит послать человека
+  одобрять то, что не разбирается.
 - `stale_self` — `status: approved`, но текущий хеш тела ≠ `content_sha`.
 - `stale_deps` — свой хеш сходится, но хеш какого-то файла из `depends_on` не сходится.
 
@@ -120,8 +140,8 @@ next_stage(project) -> tuple[str, str | None]             # (stage, episode)
 | 2 research | ничего (необязательный) |
 | 3 story (idea, season-arc, style-guide) | валидный `project.json` |
 | 4 script (эпизод) | idea + season-arc `approved` |
-| 5 characters | script эпизода `approved` |
-| 6 shots.json | script `approved`, style-guide `approved`, все карточки персонажей `approved`, все референсы приняты ревью |
+| 5 characters | script эпизода `approved`; каждый персонаж из его `characters` имеет одобренную карточку |
+| 6 shots.json | script `approved`, style-guide `approved`, каждый персонаж из `characters` этой серии имеет одобренную карточку, все референсы приняты ревью |
 
 Нарушение — код возврата 3, тот же, что у `generate_batch`/`mix_audio`/`assemble`,
 чтобы поведение было одинаковым по всему конвейеру.

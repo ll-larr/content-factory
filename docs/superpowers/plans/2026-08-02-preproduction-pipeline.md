@@ -234,7 +234,7 @@ def save_artifact(art: Artifact) -> None:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Ожидание: **244 passed** (235 + 9).
+Ожидание: **247 passed** (235 + 12: 10 тестов задачи + 2 из фикса по ревью).
 
 ```bash
 git add scripts/factory/artifact.py tests/test_artifact.py
@@ -428,7 +428,7 @@ def artifact_state(project_dir: Path, path: Path) -> str:
 
 - [ ] **Шаг 5: Прогнать полный набор и закоммитить**
 
-Ожидание: **253 passed**.
+Ожидание: **256 passed**.
 
 ```bash
 git add scripts/factory/preprod.py tests/test_preprod.py
@@ -634,7 +634,7 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
 
 - [ ] **Шаг 5: Прогнать полный набор и закоммитить**
 
-Ожидание: **261 passed**.
+Ожидание: **264 passed**.
 
 ```bash
 git add scripts/factory/preprod.py tests/test_preprod.py
@@ -728,6 +728,18 @@ def test_approve_records_dependency_hashes(proj):
     arc = load_artifact(proj / "bible" / "season-arc.md")
     deps = {d["path"]: d["sha"] for d in arc.meta["depends_on"]}
     assert deps["bible/idea.md"] == load_artifact(proj / "bible" / "idea.md").sha
+
+
+def test_approve_refuses_when_dependency_missing(proj):
+    """Одобрять сценарий, у которого нет идеи, бессмысленно — и падать на этом
+    тоже нельзя (находка ревью задачи 2)."""
+    run("init", "--project", proj)
+    from factory.artifact import Artifact, save_artifact
+    save_artifact(Artifact(path=proj / "episodes" / "ep01" / "script.md",
+                           meta={"kind": "script", "status": "draft"},
+                           body="сценарий"))
+    (proj / "bible" / "idea.md").unlink()
+    assert run("approve", "--project", proj, "episodes/ep01/script.md") == 1
 
 
 def test_approve_refuses_missing_file(proj):
@@ -882,10 +894,23 @@ def cmd_approve(project_dir: Path, rel: str) -> int:
     art.meta["approved_at"] = dt.datetime.now(dt.timezone.utc).isoformat(
         timespec="seconds")
     art.meta["content_sha"] = art.sha
+    # dependencies() возвращает ОБЪЯВЛЕННЫЕ зависимости, в том числе несуществующие:
+    # это сознательно, иначе порядок одобрения молча ломал бы depends_on. Здесь же
+    # несуществующая зависимость — повод отказать: одобрять артефакт, основание
+    # которого ещё не написано, бессмысленно (находка ревью задачи 2).
     deps = []
+    missing = []
     for dep in dependencies(project_dir, art):
-        deps.append({"path": dep.relative_to(project_dir).as_posix(),
-                     "sha": load_artifact(dep).sha})
+        rel_dep = dep.relative_to(project_dir).as_posix()
+        if not dep.exists():
+            missing.append(rel_dep)
+            continue
+        deps.append({"path": rel_dep, "sha": load_artifact(dep).sha})
+    if missing:
+        print(f"{rel}: нельзя одобрить — не существуют зависимости:")
+        for m in missing:
+            print(f"  - {m}")
+        return 1
     if deps:
         art.meta["depends_on"] = deps
     save_artifact(art)
@@ -935,11 +960,11 @@ if __name__ == "__main__":
 .\.venv\Scripts\python.exe -m pytest tests/test_factory_cli.py -q
 ```
 
-Ожидание: 9 passed.
+Ожидание: 10 passed.
 
 - [ ] **Шаг 6: Прогнать полный набор и закоммитить**
 
-Ожидание: **270 passed**.
+Ожидание: **274 passed**.
 
 ```bash
 git add scripts/factory.py tests/test_factory_cli.py tests/factory_cli_entry.py
@@ -1263,7 +1288,7 @@ def test_storyboard_expands_placeholders_and_records_sent_prompt(proj, monkeypat
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Ожидание: **281 passed**.
+Ожидание: **284 passed**.
 
 ```bash
 git add scripts/factory/prompts.py scripts/generate_batch.py tests/test_prompts.py tests/test_generate_batch.py
@@ -1446,7 +1471,7 @@ from factory.preprod import stage_gate
 
 - [ ] **Шаг 5: Прогнать полный набор и закоммитить**
 
-Ожидание: **285 passed**.
+Ожидание: **288 passed**.
 
 ```bash
 git add scripts/generate_batch.py tests/test_generate_batch.py
@@ -1705,7 +1730,7 @@ def cmd_budget(project_dir: Path, estimate: float) -> int:
 
 - [ ] **Шаг 6: Прогнать полный набор и закоммитить**
 
-Ожидание: **293 passed**.
+Ожидание: **296 passed**.
 
 ```bash
 git add scripts/factory.py scripts/factory/preprod.py tests/test_factory_cli.py
@@ -1751,7 +1776,10 @@ python scripts/factory.py check --project <проект> --stage script --episod
 
 ## Что написать
 
-`episodes/<ep>/script.md` со `status: draft` во frontmatter. Серия разбита на биты
+`episodes/<ep>/script.md` со `status: draft` во frontmatter. **Обязательно объяви состав
+серии** полем `characters: [Имя, Имя]` — по нему гейт понимает, чьи карточки и референсы
+нужны до раскадровки. Пропустишь — персонаж уйдёт в платную генерацию без описания.
+Серия разбита на биты
 по `quality_mode` (5 или 10 секунд на отрезок) — по биту на будущий видеоотрезок.
 У бита: что происходит, реплики персонажей, метки звуковых событий.
 
@@ -1923,7 +1951,7 @@ python scripts/factory.py feedback --project <проект> <артефакт> -
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Ожидание: **294 passed** (скиллы — markdown, тестов не добавляют).
+Ожидание: **297 passed** (скиллы — markdown, тестов не добавляют).
 
 ```bash
 git add .claude/skills CLAUDE.md README.md
