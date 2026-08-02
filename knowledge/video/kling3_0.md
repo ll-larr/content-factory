@@ -15,22 +15,34 @@ providers:                # flat: цена НЕ зависит от разреш
     pricing: flat
     tiers:
       std: { id: "kwaivgi/kling-v3.0-std/image-to-video", usd_per_sec: 0.084 }  # живьём 2026-07-08: end_image принят, $0.42/5с; формула каталога base*duration/5*(sound?1.5:1); duration 3..15; resolution НЕ слать (нет в схеме)
-      pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.168 }
+      # pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.168 }  # ОТКЛЮЧЁН: id из каталога, цена — догадка (ровно 2x от std), живой генерацией не проверена
     default_tier: std
-  openrouter:             # models-list 2026-06-17: РЕАЛЬНЫЕ id; ⚠️ 720p-only; цена без аудио
-    supports_start_end: true
-    pricing: flat
-    tiers:
-      std: { id: "kwaivgi/kling-v3.0-std", usd_per_sec: 0.084 }
-      pro: { id: "kwaivgi/kling-v3.0-pro", usd_per_sec: 0.112 }
-    default_tier: std
-  runware:
-    supports_start_end: true
-    pricing: flat
-    tiers:
-      std: { id: "klingai:kling@3.0-standard", usd_per_sec: 0.084 }
-      pro: { id: "klingai:kling@3.0-pro", usd_per_sec: 0.168 }
-    default_tier: std
+  # ⚠️ Блоки openrouter и runware ОТКЛЮЧЕНЫ (закомментированы) 2026-08-02, как и
+  # тир pro выше. Причина та же, что у seedance_2_0: гейт трат КАРТОЧНОГО уровня —
+  # validate_video_model смотрит общий status карточки, не на провайдера и не на тир.
+  # Живой генерацией подтверждён ровно один маршрут: WaveSpeed std. Пока карточка
+  # была skeleton, остальные никого не пускали; после verified они стали
+  # «разрешёнными к тратам» с непроверенными ценами. Живые пробы уже дважды
+  # показывали, что догадки по ценам врут в разы (seedance_2_0 занижал вдвое,
+  # flux_2_klein завышал в 5x) — доверия к оставшимся догадкам это не добавляет.
+  # Пока закомментировано: validate_video_model отдаёт «not available on provider»
+  # (провайдер) или _concrete_id — «неизвестный tier» до сети (тир). Трат не будет.
+  # Раскомментировать по одному, после живой генерации, вместе с фактической ценой.
+  #
+  # openrouter:             # models-list 2026-06-17: РЕАЛЬНЫЕ id; ⚠️ 720p-only; цена без аудио — живьём НЕ проверено
+  #   supports_start_end: true
+  #   pricing: flat
+  #   tiers:
+  #     std: { id: "kwaivgi/kling-v3.0-std", usd_per_sec: 0.084 }
+  #     pro: { id: "kwaivgi/kling-v3.0-pro", usd_per_sec: 0.112 }
+  #   default_tier: std
+  # runware:                # AIR — ДОГАДКА (см. knowledge/runware-api.md: видели klingai:2@2 и klingai:kling@o1-standard, точный AIR 3.0 не подтверждён)
+  #   supports_start_end: true
+  #   pricing: flat
+  #   tiers:
+  #     std: { id: "klingai:kling@3.0-standard", usd_per_sec: 0.084 }
+  #     pro: { id: "klingai:kling@3.0-pro", usd_per_sec: 0.168 }
+  #   default_tier: std
 ---
 
 # Kling v3.0 — реализм/сериал, flat-цена (дёшев на 1080p)

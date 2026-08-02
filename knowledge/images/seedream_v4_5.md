@@ -10,7 +10,12 @@ aspect_ratios: []
 cost_tier: unknown
 providers:                # рабочая лошадка кадров, консистентность (FINAL §3.1): $0.04
   wavespeed:  { id: "bytedance/seedream-v4.5", resolution_style: size, pricing: flat, usd_per_image: 0.04 }  # схема знает ТОЛЬКО size "W*H" (2026-07-08)
-  openrouter: { id: "bytedance/seedream-4.5",  pricing: flat, usd_per_image: 0.04 }
+  # ⚠️ Блок openrouter ОТКЛЮЧЁН 2026-08-02 (та же причина, что у seedance_2_0 и kling3_0):
+  # гейт трат карточного уровня, verified по WaveSpeed открывал трату и на OpenRouter,
+  # где id и цена живой генерацией не проверены. Закомментировано →
+  # validate_image_model отдаёт «not available on provider», generate_batch exit 2.
+  # Раскомментировать после живой генерации, вместе с фактической ценой.
+  # openrouter: { id: "bytedance/seedream-4.5",  pricing: flat, usd_per_image: 0.04 }
 ---
 
 # Seedream 4.5 (seedream_v4_5) — рабочая лошадка кадров, консистентность
