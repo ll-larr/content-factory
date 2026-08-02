@@ -7,12 +7,20 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 _SEP = "---"
+# Разделитель ищем построчно (регексом на ЦЕЛУЮ строку), а не подстрокой text.split("---").
+# Причина: PyYAML не кавычит скаляр вида "a---b", поэтому значение meta с "---" в
+# середине строки (например logline на русском — прочерк там пишут часто) при
+# substring-split разрежет документ не там и молча испортит meta/body без исключения.
+# Построчный разбор такому значению ничего не сделает — "---" внутри чужой строки не
+# совпадает с regex на всю строку.
+_SEP_LINE_RE = re.compile(r"-{3}[ \t]*")
 
 
 class ArtifactError(ValueError):
@@ -41,18 +49,22 @@ class Artifact:
 def load_artifact(path: Path) -> Artifact:
     path = Path(path)
     text = path.read_text(encoding="utf-8")
-    if not text.startswith(_SEP):
+    lines = text.split("\n")
+    if not lines or not _SEP_LINE_RE.fullmatch(lines[0]):
         raise ArtifactError(f"{path}: нет YAML-frontmatter")
-    parts = text.split(_SEP, 2)
-    if len(parts) < 3:
+    closing = next(
+        (i for i in range(1, len(lines)) if _SEP_LINE_RE.fullmatch(lines[i])), None
+    )
+    if closing is None:
         raise ArtifactError(f"{path}: frontmatter не закрыт '{_SEP}'")
     try:
-        meta = yaml.safe_load(parts[1]) or {}
+        meta = yaml.safe_load("\n".join(lines[1:closing])) or {}
     except yaml.YAMLError as e:
         raise ArtifactError(f"{path}: некорректный YAML — {e}") from None
     if not isinstance(meta, dict):
         raise ArtifactError(f"{path}: frontmatter не является YAML-словарём")
-    return Artifact(path=path, meta=meta, body=parts[2].strip())
+    body = "\n".join(lines[closing + 1:])
+    return Artifact(path=path, meta=meta, body=body.strip())
 
 
 def save_artifact(art: Artifact) -> None:

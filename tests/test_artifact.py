@@ -80,3 +80,33 @@ def test_save_keeps_cyrillic_readable(tmp_path):
                    meta={"kind": "idea", "note": "космос"}, body="тело")
     save_artifact(art)
     assert "космос" in art.path.read_text(encoding="utf-8")
+
+
+def test_meta_value_with_dashes_survives_round_trip(tmp_path):
+    """PyYAML не кавычит значение вида 'a---b': найти разделитель подстрокой
+    means such a value would rip the document in the wrong place. Значение с '---'
+    в середине строки обязано пережить save_artifact -> load_artifact без потерь,
+    а тело не должно склеиться с хвостом meta."""
+    p = tmp_path / "idea.md"
+    art = Artifact(
+        path=p,
+        meta={"kind": "idea", "logline": "Coming home---after all these years"},
+        body="НАСТОЯЩЕЕ ТЕЛО",
+    )
+    save_artifact(art)
+
+    loaded = load_artifact(p)
+    assert loaded.meta["logline"] == "Coming home---after all these years"
+    assert loaded.body == "НАСТОЯЩЕЕ ТЕЛО"
+
+
+def test_body_with_horizontal_rule_not_truncated(tmp_path):
+    """Строка '---' в теле — законная markdown-разметка (горизонтальная линейка),
+    а не второй закрывающий разделитель. Не должна обрезать тело."""
+    p = tmp_path / "idea.md"
+    body = "Первый абзац.\n\n---\n\nВторой абзац после линейки."
+    art = Artifact(path=p, meta={"kind": "idea"}, body=body)
+    save_artifact(art)
+
+    loaded = load_artifact(p)
+    assert loaded.body == body
