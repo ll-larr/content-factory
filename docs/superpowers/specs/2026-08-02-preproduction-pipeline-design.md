@@ -111,7 +111,7 @@ characters: [Мурзик, Барсик]
 | `idea` | — (опирается на `project.json`, он не артефакт) |
 | `season-arc` | `bible/idea.md` |
 | `style-guide` | `bible/idea.md` |
-| `character` | `bible/idea.md`, `bible/style-guide.md`, все `episodes/*/script.md`, где персонаж упомянут |
+| `character` | `bible/idea.md`, `bible/style-guide.md`, все `episodes/*/script.md`, объявившие персонажа в своём `characters` |
 | `script` | `bible/idea.md`, `bible/season-arc.md` |
 
 ## 5. Машина состояний и гейты
