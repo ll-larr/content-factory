@@ -83,10 +83,10 @@ def test_save_keeps_cyrillic_readable(tmp_path):
 
 
 def test_meta_value_with_dashes_survives_round_trip(tmp_path):
-    """PyYAML не кавычит значение вида 'a---b': найти разделитель подстрокой
-    means such a value would rip the document in the wrong place. Значение с '---'
-    в середине строки обязано пережить save_artifact -> load_artifact без потерь,
-    а тело не должно склеиться с хвостом meta."""
+    """PyYAML не кавычит значение вида 'a---b', поэтому поиск разделителя подстрокой
+    разрезал бы документ не там. Значение с '---' в середине строки обязано пережить
+    save_artifact -> load_artifact без потерь, а тело не должно склеиться с хвостом
+    meta."""
     p = tmp_path / "idea.md"
     art = Artifact(
         path=p,
