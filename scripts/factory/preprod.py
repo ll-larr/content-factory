@@ -23,32 +23,47 @@ DEPENDS_ON: dict[str, list[str]] = {
 }
 
 
+def _script_cast(script: Path) -> list[str]:
+    """Состав серии — из объявленного поля characters во frontmatter сценария.
+
+    Состав ОБЪЯВЛЯЕТСЯ явно, а не ищется по тексту. Поиск имени подстрокой врёт в обе
+    стороны: «Мурзик смотрит на фотографию Барсика» записал бы Барсика в участники
+    сцены, а персонажа, названного в сценарии иначе, не нашёл бы вовсе. Тот же ход уже
+    принят в спеке §10 для промптов кадров ({{char:...}} вместо поиска имени).
+
+    Сценарий без поля characters — пустой состав: серия без персонажей технически
+    возможна (заставка, титры). Битый сценарий пропускаем: его отобьёт гейт
+    собственного этапа, ронять здесь нечем.
+    """
+    try:
+        declared = load_artifact(script).meta.get("characters") or []
+    except (ArtifactError, OSError):
+        return []
+    return [str(name) for name in declared]
+
+
+def episode_cast(project_dir: Path, episode: str) -> list[str]:
+    """Персонажи, объявленные в сценарии эпизода."""
+    return _script_cast(Path(project_dir) / "episodes" / episode / "script.md")
+
+
 def dependencies(project_dir: Path, art: Artifact) -> list[Path]:
     """Файлы, от которых артефакт зависит. Для персонажа к статическому списку
-    добавляются сценарии, где он упомянут: правка такого сценария меняет то, каким
-    персонаж должен быть.
+    добавляются сценарии, объявившие его в своём составе: правка такого сценария
+    меняет то, каким персонаж должен быть.
 
     Список статических путей отдаётся как есть, даже если файл ещё не создан:
     это ожидаемые зависимости по карте DEPENDS_ON, а не проверка «что уже готово».
     Отфильтровывать несуществующее тут не нужно и вредно — например, approve
     сценария должен видеть bible/idea.md среди его зависимостей независимо от
-    порядка, в котором артефакты создаются. Сценарии из glob по построению уже
-    существуют, дополнительная фильтрация им не требуется."""
+    порядка, в котором артефакты создаются."""
     project_dir = Path(project_dir)
     kind = art.meta.get("kind")
     deps = [project_dir / rel for rel in DEPENDS_ON.get(kind, [])]
     if kind == "character":
         name = art.meta.get("name") or art.path.stem
         for script in sorted((project_dir / "episodes").glob("*/script.md")):
-            try:
-                body = load_artifact(script).body
-            except (ArtifactError, OSError):
-                # Сценарий существует, но не разбирается (например нет frontmatter) —
-                # понять, упомянут ли в нём персонаж, невозможно, поэтому молча
-                # пропускаем. Сам этот сценарий всё равно будет отбит гейтом
-                # собственного этапа, когда до него дойдут напрямую.
-                continue
-            if name in body:
+            if name in _script_cast(script):
                 deps.append(script)
     return deps
 
@@ -123,15 +138,25 @@ def stage_gate(project_dir: Path, stage: str, episode: str | None = None) -> lis
         if state != "approved":
             problems.append(f"{rel}: {_STATE_MESSAGE[state]}")
 
-    if stage == "storyboard":
-        chars = sorted((project_dir / "bible" / "characters").glob("*.md"))
-        if not chars:
-            problems.append("bible/characters/: нет ни одной карточки персонажа")
-        for card in chars:
-            state = artifact_state(project_dir, card)
-            if state != "approved":
-                rel = card.relative_to(project_dir).as_posix()
-                problems.append(f"{rel}: {_STATE_MESSAGE[state]}")
+    # Персонажи проверяются ПО СОСТАВУ СЕРИИ, а не по тому, какие карточки уже лежат
+    # в bible/characters/. Иначе персонаж, впервые появившийся во второй серии,
+    # проходил бы гейт насквозь: карточки первой серии одобрены, значит «всё готово»,
+    # и кадры второй уходили бы в платную генерацию без описания и референса нового
+    # героя (находка ревью задачи 3).
+    if stage in ("characters", "storyboard") and episode is not None:
+        problems += _cast_problems(project_dir, episode)
+    return problems
+
+
+def _cast_problems(project_dir: Path, episode: str) -> list[str]:
+    """По строке на каждого персонажа серии, у которого нет одобренной карточки."""
+    problems = []
+    for name in episode_cast(project_dir, episode):
+        card = project_dir / "bible" / "characters" / f"{name}.md"
+        state = artifact_state(project_dir, card)
+        if state != "approved":
+            rel = card.relative_to(project_dir).as_posix()
+            problems.append(f"{rel} (персонаж {name}): {_STATE_MESSAGE[state]}")
     return problems
 
 
@@ -148,8 +173,7 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
     for ep in episode_ids(project_dir):
         if artifact_state(project_dir, project_dir / f"episodes/{ep}/script.md") != "approved":
             return ("script", ep)
-        chars = sorted((project_dir / "bible" / "characters").glob("*.md"))
-        if not chars or any(artifact_state(project_dir, c) != "approved" for c in chars):
+        if _cast_problems(project_dir, ep):
             return ("characters", ep)
         if not (project_dir / "episodes" / ep / "shots.json").exists():
             return ("storyboard", ep)

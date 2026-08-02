@@ -82,26 +82,42 @@ def test_dependencies_of_script(proj):
     assert [p.name for p in dependencies(proj, art)] == ["idea.md", "season-arc.md"]
 
 
-def test_dependencies_of_character_include_scripts_mentioning_it(proj):
-    write(proj / "episodes" / "ep01" / "script.md", "script", "Мурзик жмёт кнопку")
-    write(proj / "episodes" / "ep02" / "script.md", "script", "Барсик спит")
-    art = write(proj / "bible" / "characters" / "Мурзик.md", "character", "рыжий кот")
-    got = [p.as_posix().split("projects/")[-1] for p in dependencies(proj, art)]
+def test_dependencies_of_character_use_declared_cast(proj):
+    """Состав серии берётся из объявленного characters, а не поиском имени по тексту:
+    «Мурзик смотрит на фотографию Барсика» не делает Барсика участником сцены."""
+    write(proj / "episodes" / "ep01" / "script.md", "script", "Мурзик жмёт кнопку",
+          characters=["Мурзик"])
+    write(proj / "episodes" / "ep02" / "script.md", "script",
+          "Мурзик смотрит на фотографию Барсика", characters=["Мурзик"])
+    art = write(proj / "bible" / "characters" / "Барсик.md", "character", "серый кот")
+    got = [p.as_posix() for p in dependencies(proj, art)]
+    assert not any("script.md" in g for g in got), \
+        "Барсик нигде не объявлен — ни один сценарий не его зависимость"
+
+    murzik = write(proj / "bible" / "characters" / "Мурзик.md", "character", "рыжий кот")
+    got = [p.as_posix() for p in dependencies(proj, murzik)]
     assert any("ep01/script.md" in g for g in got)
-    assert not any("ep02/script.md" in g for g in got), \
-        "Барсик не упомянут — сценарий ep02 не зависимость Мурзика"
+    assert any("ep02/script.md" in g for g in got)
 
 
 def test_dependencies_of_character_skips_unparseable_script(proj):
     broken = proj / "episodes" / "ep01" / "script.md"
     broken.parent.mkdir(parents=True)
-    broken.write_text("Мурзик жмёт кнопку, но файл без frontmatter\n", encoding="utf-8")
-    write(proj / "episodes" / "ep02" / "script.md", "script", "Мурзик жмёт кнопку")
+    broken.write_text("файл без frontmatter\n", encoding="utf-8")
+    write(proj / "episodes" / "ep02" / "script.md", "script", "текст",
+          characters=["Мурзик"])
     art = write(proj / "bible" / "characters" / "Мурзик.md", "character", "рыжий кот")
     got = [p.as_posix() for p in dependencies(proj, art)]
     assert not any("ep01/script.md" in g for g in got), \
         "битый сценарий (без frontmatter) пропущен, а не роняет dependencies()"
     assert any("ep02/script.md" in g for g in got)
+
+
+def test_dependencies_of_character_survive_script_without_cast(proj):
+    """Серия без персонажей технически возможна (заставка, титры) — не падать."""
+    write(proj / "episodes" / "ep01" / "script.md", "script", "титры")
+    art = write(proj / "bible" / "characters" / "Мурзик.md", "character", "рыжий кот")
+    assert [p.as_posix() for p in dependencies(proj, art) if "script.md" in p.as_posix()] == []
 
 
 def test_dependencies_of_idea_is_empty(proj):
@@ -171,7 +187,8 @@ def test_next_stage_walks_all_episodes_in_order(tmp_path):
     write(p / "bible" / "style-guide.md", "style-guide", "стиль", status="approved")
     assert next_stage(p) == ("script", "ep01")
 
-    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved",
+          characters=["Мурзик"])
     assert next_stage(p) == ("characters", "ep01")
 
     # Дописано сверх брифа: в буквальном тексте теста резолвер ни разу не доходит
@@ -195,3 +212,66 @@ def test_next_stage_none_when_nothing_left(tmp_path):
     write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
     assert next_stage(p) is None
+
+
+# --- Находка ревью: персонаж, введённый в поздней серии, проходил гейт без карточки ---
+
+def _closed_story(p):
+    """Одобрить story-артефакты, чтобы дойти до поэпизодных гейтов."""
+    for rel, kind in (("bible/idea.md", "idea"), ("bible/season-arc.md", "season-arc"),
+                      ("bible/style-guide.md", "style-guide")):
+        write(p / rel, kind, "текст", status="approved")
+
+
+def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
+    """ep01 закрыт, ep02 вводит Барсика без карточки: резолвер обязан позвать
+    characters, а не проскочить к storyboard (иначе кадры второй серии уйдут в
+    генерацию за деньги с персонажем без описания и референса)."""
+    p = make_project(tmp_path, episodes=2)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["Мурзик"])
+    write(p / "episodes" / "ep02" / "script.md", "script", "с2",
+          status="approved", characters=["Мурзик", "Барсик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
+
+    assert next_stage(p) == ("characters", "ep02")
+
+
+def test_storyboard_gate_names_character_without_card(tmp_path):
+    p = make_project(tmp_path, episodes=2)
+    _closed_story(p)
+    write(p / "episodes" / "ep02" / "script.md", "script", "с2",
+          status="approved", characters=["Мурзик", "Барсик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+
+    problems = stage_gate(p, "storyboard", "ep02")
+    assert any("Барсик" in x for x in problems), problems
+
+
+def test_storyboard_gate_open_when_whole_cast_approved(tmp_path):
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["Мурзик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот", status="approved")
+    assert stage_gate(p, "storyboard", "ep01") == []
+
+
+def test_characters_gate_blocked_while_card_is_draft(tmp_path):
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["Мурзик"])
+    write(p / "bible" / "characters" / "Мурзик.md", "character", "кот")
+    problems = stage_gate(p, "characters", "ep01")
+    assert any("Мурзик" in x for x in problems), problems
+
+
+def test_storyboard_gate_survives_script_without_cast(tmp_path):
+    """Серия без персонажей не должна упираться в «нет ни одной карточки»."""
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "титры", status="approved")
+    assert stage_gate(p, "storyboard", "ep01") == []
