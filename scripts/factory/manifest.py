@@ -16,7 +16,7 @@ from pathlib import Path
 STATUSES = {"pending", "generating", "generated", "done", "rejected",
             "accepted_with_notes"}
 KNOWN_FIELDS = {"file", "job_id", "credits_spent", "reject_reason", "notes",
-                "attempts"}
+                "attempts", "prompt_sent"}
 ALLOWED = {
     "pending": {"generating"},
     "generating": {"generated", "pending"},
@@ -50,6 +50,7 @@ class Manifest:
             "kind": kind, "status": "pending", "attempts": 0,
             "credits_spent": 0.0, "file": None, "job_id": None,
             "reject_reason": None, "notes": None, "reject_count": 0,
+            "prompt_sent": None,
         })
 
     def get(self, item_id: str) -> dict:

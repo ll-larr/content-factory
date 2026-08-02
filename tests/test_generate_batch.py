@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import generate_batch as gb
+from factory.artifact import Artifact, save_artifact
 from factory.ffmpeg_tools import FfmpegError
 from factory.manifest import Manifest
 from factory.providers.base import ProviderError
@@ -41,6 +42,15 @@ def write_image_card(tmp_path):
     (idir / "z_image.md").write_text(IMAGE_CARD, encoding="utf-8")
 
 
+def write_style_guide(project_dir):
+    """Style-guide проекта с каноническим блоком: без него {{style}} в промптах
+    кадров не проходит ни гейт §10 (test_prompts.py), ни expand_prompt."""
+    save_artifact(Artifact(
+        path=project_dir / "bible" / "style-guide.md",
+        meta={"kind": "style-guide", "status": "approved"},
+        body="<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"))
+
+
 @pytest.fixture
 def proj(tmp_path, monkeypatch):
     """Мини-проект: 3 кадра, 2 отрезка; CWD = tmp_path (как корень репо).
@@ -60,8 +70,8 @@ def proj(tmp_path, monkeypatch):
     }), encoding="utf-8")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
-        "frames": [{"n": 1, "prompt": "a"}, {"n": 2, "prompt": "b"},
-                   {"n": 3, "prompt": "c"}],
+        "frames": [{"n": 1, "prompt": "{{style}} a"}, {"n": 2, "prompt": "{{style}} b"},
+                   {"n": 3, "prompt": "{{style}} c"}],
         "segments": [
             {"n": 1, "start_frame": 1, "end_frame": 2, "prompt": "m1"},
             {"n": 2, "start_frame": 2, "end_frame": 3, "prompt": "m2"}],
@@ -70,6 +80,7 @@ def proj(tmp_path, monkeypatch):
     kdir.mkdir(parents=True)
     (kdir / "seedance_2_0.md").write_text(VIDEO_CARD, encoding="utf-8")
     write_image_card(tmp_path)
+    write_style_guide(pdir)
     monkeypatch.chdir(tmp_path)
     return pdir
 
@@ -342,11 +353,12 @@ def test_refs_resolved_against_project_dir(tmp_path, monkeypatch):
     ref_file.write_bytes(b"x")
     (ep / "shots.json").write_text(json.dumps({
         "episode": "ep01",
-        "frames": [{"n": 1, "prompt": "a"},
-                   {"n": 2, "prompt": "b", "refs": ["bible/ref.png"]}],
+        "frames": [{"n": 1, "prompt": "{{style}} a"},
+                   {"n": 2, "prompt": "{{style}} b", "refs": ["bible/ref.png"]}],
         "segments": [],
     }), encoding="utf-8")
     write_image_card(tmp_path)
+    write_style_guide(pdir)
     monkeypatch.chdir(tmp_path)
     fp = fake_provider(monkeypatch)
     result = gb.main(["--project", str(pdir), "--episode", "ep01",
@@ -502,3 +514,36 @@ def test_frames_are_normalized_to_png_segments_are_not(proj, monkeypatch):
     fake_provider(monkeypatch)
     run(proj, "segments")
     assert calls == []
+
+
+def test_storyboard_rejects_frame_without_style_placeholder(proj, monkeypatch):
+    """Кадр без {{style}} — потеря стиля на всю серию; отбиваем до трат."""
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["frames"][0]["prompt"] = "cat on a fence"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 2
+    assert fp.submitted == [], "до провайдера дойти не должно"
+
+
+def test_storyboard_expands_placeholders_and_records_sent_prompt(proj, monkeypatch):
+    """Провайдер получает развёрнутый текст, а манифест хранит то, что реально ушло."""
+    save_artifact(Artifact(
+        path=proj / "bible" / "style-guide.md",
+        meta={"kind": "style-guide", "status": "approved"},
+        body="<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"))
+
+    shots = json.loads((proj / "episodes" / "ep01" / "shots.json").read_text(
+        encoding="utf-8"))
+    shots["frames"][0]["prompt"] = "{{style}} cat on a fence"
+    (proj / "episodes" / "ep01" / "shots.json").write_text(json.dumps(shots),
+                                                           encoding="utf-8")
+
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 0
+    assert fp.submitted[0]["prompt"] == "flat 2D cartoon cat on a fence"
+
+    m = Manifest(proj / "manifest.json")
+    assert m.get("ep01/storyboard/001")["prompt_sent"] == "flat 2D cartoon cat on a fence"

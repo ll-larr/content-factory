@@ -8,7 +8,8 @@
 (оба задаются в project.json; дефолт — по типу контента, FINAL §4).
 Успешные генерации получают статус generated и ждут ревью (scripts/review.py).
 
-Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию;
+Коды выхода: 0 успех; 1 сбои/отмена; 2 модель не прошла валидацию или промпт
+кадра не прошёл гейт консистентности (§10: {{style}}/{{char:...}}/refs);
 3 segments заблокирован — кадры не приняты ревью.
 """
 from __future__ import annotations
@@ -23,6 +24,7 @@ from factory.ffmpeg_tools import FfmpegError, ensure_png
 from factory.manifest import Manifest, ManifestError
 from factory.models import find_card, validate_image_model, validate_video_model
 from factory.project import load_project
+from factory.prompts import expand_prompt, prompt_problems
 from factory.providers import get_provider
 from factory.providers.base import ProviderError
 from factory.shots import frame_path, load_shots, segment_path
@@ -53,12 +55,13 @@ def build_jobs(stage: str, shots: dict, project, episode_dir: Path,
             # refs в shots.json — относительно папки проекта; передаём
             # абсолютные/CWD-совместимые пути.
             resolved_refs = [str(project_dir / ref) for ref in f.get("refs", [])]
+            expanded = expand_prompt(f["prompt"], project_dir)
             jobs.append({
                 "item_id": f"{ep}/storyboard/{f['n']:03d}",
                 "kind": "frame",
                 "model": project.image_model,
                 "dest": frame_path(episode_dir, f["n"]),
-                "params": {"prompt": f["prompt"], "refs": resolved_refs,
+                "params": {"prompt": expanded, "refs": resolved_refs,
                            "aspect_ratio": aspect, "resolution": project.resolution,
                            "tier": project.image_tier},
             })
@@ -157,6 +160,22 @@ def main(argv=None) -> int:
         if problems:
             return _validation_gate(problems)
 
+        # Гейт консистентности (спека §10): негодный промпт — {{style}} не
+        # объявлен, {{char:...}} без карточки/одобрения/референса, неизвестный
+        # плейсхолдер — отбиваем ДО сметы. Иначе кадр без референса персонажа
+        # оплатится и придёт неконсистентным.
+        if args.stage == "storyboard":
+            bad = []
+            for f in shots["frames"]:
+                for problem in prompt_problems(f["prompt"], project_dir,
+                                               f.get("refs", [])):
+                    bad.append(f"кадр {f['n']:03d}: {problem}")
+            if bad:
+                print("ПРОМПТЫ НЕ ПРОШЛИ ПРОВЕРКУ — генерация не запущена:")
+                for p in bad:
+                    print(f"  - {p}")
+                return 2
+
     jobs = build_jobs(args.stage, shots, project, episode_dir, project_dir)
     for j in jobs:
         manifest.add(j["item_id"], kind=j["kind"])
@@ -238,6 +257,7 @@ def main(argv=None) -> int:
                 ensure_png(j["dest"])
             manifest.set_status(
                 j["item_id"], "generated", file=str(j["dest"]), job_id=job_id,
+                prompt_sent=j["params"].get("prompt"),
                 credits_spent=item["credits_spent"] + estimates[j["item_id"]])
             ok += 1
         except (ProviderError, FfmpegError) as e:
