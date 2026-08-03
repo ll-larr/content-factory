@@ -361,3 +361,39 @@ def test_next_stage_stays_on_characters_until_refs_accepted(tmp_path):
         m.set_status("bible/characters/Мурзик", st)
     m.save()
     assert next_stage(p) == ("storyboard", "ep01")
+
+
+# --- Ревью 2026-08-02: внешние данные строили пути ---
+
+def test_character_name_escaping_project_is_a_gate_problem(tmp_path):
+    """Имя персонажа из frontmatter сценария напрямую становится путём карточки и
+    файлом референса. '../../secret' читал и ПИСАЛ бы вне проекта."""
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1",
+          status="approved", characters=["../../../secret"])
+    problems = stage_gate(p, "characters", "ep01")
+    assert any("не годится как имя файла" in x for x in problems), problems
+
+
+@pytest.mark.parametrize("name", ["a/b", r"a\b", "..", ".", "", "/abs"])
+def test_is_safe_name_rejects_path_pieces(name):
+    from factory.preprod import is_safe_name
+    assert not is_safe_name(name)
+
+
+def test_is_safe_name_accepts_ordinary_names():
+    from factory.preprod import is_safe_name
+    assert is_safe_name("Мурзик") and is_safe_name("murzik-2")
+
+
+def test_dependency_outside_project_is_stale_not_approved(tmp_path):
+    """depends_on берётся из данных: путь наружу читался и хешировался, и артефакт
+    объявлялся approved на основании файла вне проекта."""
+    p = make_project(tmp_path, episodes=1)
+    outside = tmp_path.parent / "чужое.md"
+    write(outside, "idea", "чужое")
+    body = "арка"
+    write(p / "bible" / "season-arc.md", "season-arc", body, status="approved",
+          depends_on=[{"path": "../../чужое.md", "sha": body_sha("чужое")}])
+    assert artifact_state(p, p / "bible" / "season-arc.md") == "stale_deps"

@@ -44,6 +44,26 @@ def _script_cast(script: Path) -> list[str]:
     return [str(name) for name in declared]
 
 
+def is_safe_name(name: str) -> bool:
+    """Годится ли имя как единственный компонент пути.
+
+    Имя персонажа приходит из frontmatter сценария — его пишет модель или правит
+    человек, и оно напрямую превращается в путь bible/characters/<имя>.md и в файл
+    референса <имя>-ref.png. Без проверки имя вида '../../secret' читает и ПИШЕТ
+    за пределами проекта; воспроизведено ревью 2026-08-02.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if any(sep in name for sep in ("/", "\\")):
+        return False
+    return not Path(name).is_absolute()
+
+
+def unsafe_names(project_dir: Path, episode: str) -> list[str]:
+    """Имена состава серии, непригодные как имя файла."""
+    return [n for n in episode_cast(project_dir, episode) if not is_safe_name(n)]
+
+
 def episode_cast(project_dir: Path, episode: str) -> list[str]:
     """Персонажи, объявленные в сценарии эпизода."""
     return _script_cast(Path(project_dir) / "episodes" / episode / "script.md")
@@ -94,6 +114,16 @@ def artifact_state(project_dir: Path, path: Path) -> str:
         return "stale_self"
     for dep in art.meta.get("depends_on") or []:
         dep_path = project_dir / dep["path"]
+        # Зависимость обязана лежать ВНУТРИ проекта. Путь берётся из frontmatter,
+        # то есть из данных: '../../чужое.md' иначе читался бы и хешировался, и
+        # артефакт объявлялся approved на основании файла вне проекта
+        # (воспроизведено ревью 2026-08-02).
+        try:
+            inside = dep_path.resolve().is_relative_to(Path(project_dir).resolve())
+        except OSError:
+            inside = False
+        if not inside:
+            return "stale_deps"
         if not dep_path.exists():
             return "stale_deps"
         try:
@@ -206,6 +236,11 @@ def _cast_problems(project_dir: Path, episode: str) -> list[str]:
     """По строке на каждого персонажа серии, у которого нет одобренной карточки."""
     problems = []
     for name in episode_cast(project_dir, episode):
+        if not is_safe_name(name):
+            problems.append(
+                f"персонаж {name!r}: имя не годится как имя файла — уберите "
+                "разделители пути и точки-родители")
+            continue
         card = project_dir / "bible" / "characters" / f"{name}.md"
         rel = card.relative_to(project_dir).as_posix()
         state = artifact_state(project_dir, card)

@@ -47,6 +47,13 @@ def has_canonical(path: Path, name: str) -> bool:
 
 
 def _character_card(project_dir: Path, name: str) -> Path:
+    """Путь карточки. Имя приходит из плейсхолдера {{char:...}} в shots.json, то
+    есть из данных — компонент пути обязан быть одним сегментом (ревью 2026-08-02).
+    Регулярка плейсхолдера уже не пропускает '/', но полагаться на неё одну нельзя:
+    её легко ослабить, а последствие — чтение и запись вне проекта."""
+    from factory.preprod import is_safe_name
+    if not is_safe_name(name):
+        raise PromptError(f"недопустимое имя персонажа {name!r}")
     return Path(project_dir) / "bible" / "characters" / f"{name}.md"
 
 
