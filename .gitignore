@@ -12,3 +12,4 @@ spike/
 .env
 .env.*
 !.env.example
+graphify-out/
