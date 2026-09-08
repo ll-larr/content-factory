@@ -472,3 +472,34 @@ def test_text_task_rejects_unsafe_names(root):
     with pytest.raises(webapp.WebappError):
         webapp.run_text_task(FakeRunner(), root, "pilot", "script",
                              episode="../..", repo_root=REPO_ROOT)
+
+
+# --- следующий шаг знает, чем его запускать --------------------------------
+
+def test_next_step_says_which_runner_it_needs(root):
+    """Панель не решает сама, платная стадия или текстовая: кнопка, решающая
+    это самостоятельно, однажды отправит платную стадию мимо сметы."""
+    view = webapp.project_overview(root / "pilot", KNOWLEDGE)
+
+    assert view["next"]["kind"] in ("text", "paid")
+    assert view["next"]["stage"]
+
+
+def test_paid_and_text_stages_are_split_by_the_same_lists():
+    from factory.preprod import PAID_STAGES
+
+    for stage in PAID_STAGES:
+        assert webapp._next_step((stage, "ep01"))["kind"] == "paid"
+    for stage in webapp.TEXT_RUNNABLE:
+        if stage in PAID_STAGES:
+            continue
+        assert webapp._next_step((stage, "ep01"))["kind"] == "text"
+
+
+def test_unknown_stage_is_named_not_hidden():
+    """Молча спрятать кнопку значит соврать, что делать нечего."""
+    assert webapp._next_step(("невиданное", None))["kind"] == "unknown"
+
+
+def test_no_next_step_is_none():
+    assert webapp._next_step(None) is None

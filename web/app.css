@@ -392,3 +392,8 @@ h2.sec span { font-size:11px; color:var(--text-3); text-transform:none;
 .fc-report { white-space:pre-wrap; word-break:break-word; font-size:12px;
   line-height:1.5; max-height:60vh; overflow-y:auto; background:var(--panel-2);
   border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin:0; }
+
+/* Артефакт открывается по клику: имя — кнопка, а не мёртвый текст. */
+button.artifact { font-family:var(--f-mono); font-size:inherit; text-align:left;
+  padding:0; }
+.go .btn.ghost { margin-left:8px; }

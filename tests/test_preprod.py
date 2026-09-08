@@ -806,14 +806,41 @@ def _educational(tmp_path):
         "models": {"image": {"model": "z_image_turbo"},
                    "video": {"model": "vidu_q2_turbo"}},
     }, ensure_ascii=False), encoding="utf-8")
-    for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md",
-                "episodes/ep01/script.md"):
+    # research.md здесь одобрен: у познавательного жанра исследование —
+    # ПЕРВАЯ фаза (`requires_research: true`), и без него резолвер честно
+    # возвращает её, а не следующие.
+    for rel in ("research.md", "bible/idea.md", "bible/season-arc.md",
+                "bible/style-guide.md", "episodes/ep01/script.md"):
         # content_sha обязан совпадать с телом, иначе артефакт числится
         # stale_self и гейт честно возвращает более раннюю стадию.
         art = Artifact(path=proj / rel, meta={"status": "approved"}, body="текст")
         art.meta["content_sha"] = art.sha
         save_artifact(art)
     return proj
+
+
+def test_research_is_the_first_phase_where_the_genre_demands_it(tmp_path):
+    """Библия познавательного жанра, написанная раньше источников, — выдумка,
+    которую потом придётся переписывать."""
+    proj = _educational(tmp_path)
+    (proj / "research.md").unlink()
+
+    assert next_stage(proj) == ("research", None)
+
+
+def test_research_stays_optional_for_narrative_genres(tmp_path):
+    """У жанра без `requires_research` шаг вне резолвера: требовать его значило
+    бы придумывать работу."""
+    proj = _educational(tmp_path)
+    brief = json.loads((proj / "project.json").read_text("utf-8"))
+    brief["genre"] = "animation"
+    brief["audience"] = "6-9"
+    (proj / "project.json").write_text(
+        json.dumps(brief, ensure_ascii=False), encoding="utf-8")
+    (proj / "research.md").unlink()
+
+    stage, _ = next_stage(proj)
+    assert stage != "research"
 
 
 def test_next_stage_skips_characters_for_educational(tmp_path):

@@ -1,11 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
-projects/**/*.png
-projects/**/*.mp4
-projects/**/*.mp3
-projects/**/*.m4a
-projects/**/*.wav
+# Контент-проекты целиком: это работа человека, а не продукт. Раньше
+# игнорировались только медиа, и тексты проекта уезжали в репозиторий — на
+# публичном GitHub это чужая интеллектуальная собственность в открытом доступе.
+projects/*
+!projects/.gitkeep
 spike/
 .pytest_cache/
 .understand-anything/

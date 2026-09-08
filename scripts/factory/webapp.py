@@ -125,12 +125,36 @@ def project_overview(project_dir: Path,
             for item_id, item in sorted(items.items())
             if item_id.startswith("bible/characters/")
         ],
-        "next": ({"stage": stage[0], "episode": stage[1],
-                  "label": STAGE_LABELS.get(stage[0], stage[0])}
-                 if stage else None),
+        "next": _next_step(stage),
         "budget": {"limit": float(budget) if budget is not None else None,
                    "spent": manifest.credits_total()},
     }
+
+
+def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
+    """Следующий шаг конвейера вместе с тем, ЧЕМ его запускать.
+
+    Резолвер (`preprod.next_stage`) отвечает «что дальше», а панели нужно ещё и
+    «каким runner'ом»: платные стадии идут через смету и подтверждение,
+    текстовые — сразу. Деление берётся из тех же двух списков, что и везде
+    (`PAID_STAGES`, `TEXT_RUNNABLE`), а не заводится третьим мнением: кнопка,
+    решающая это самостоятельно, однажды отправит платную стадию мимо сметы.
+    """
+    from factory.preprod import PAID_STAGES
+
+    if stage is None:
+        return None
+    name, episode = stage
+    if name in PAID_STAGES:
+        kind = "paid"
+    elif name in TEXT_RUNNABLE:
+        kind = "text"
+    else:
+        # Резолвер вернул шаг, которого панель запускать не умеет. Молча
+        # спрятать кнопку значит соврать, что делать нечего.
+        kind = "unknown"
+    return {"stage": name, "episode": episode, "kind": kind,
+            "label": STAGE_LABELS.get(name, name)}
 
 
 def _fact_check_block(project_dir: Path, episode: str,

@@ -382,6 +382,16 @@ def test_editing_the_script_invalidates_the_check(project):
 
 # --- гейты конвейера -------------------------------------------------------
 
+def _approve(path: Path, body: str) -> None:
+    """Одобренный артефакт: content_sha обязан совпасть с телом."""
+    from factory.artifact import Artifact, save_artifact
+
+    art = Artifact(path=path, meta={"status": "approved"}, body=body)
+    art.meta["content_sha"] = art.sha
+    save_artifact(art)
+
+
+
 def test_cartoon_never_needs_a_fact_check(cartoon):
     assert preprod.fact_check_problem(cartoon, "ep01") is None
 
@@ -400,7 +410,14 @@ def test_storyboard_is_blocked_until_facts_are_checked(project):
     assert any("проверк" in p for p in blockers)
 
 
+def test_research_comes_before_everything_for_this_genre(project):
+    """У познавательного жанра исследование — первая фаза, и резолвер
+    начинает с неё, а не с идеи."""
+    assert preprod.next_stage(project) == ("research", None)
+
+
 def test_next_stage_sends_written_script_to_the_check(project):
+    _approve(project / "research.md", "источники")
     for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md"):
         path = project / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,6 +428,7 @@ def test_next_stage_sends_written_script_to_the_check(project):
 
 
 def test_next_stage_prefers_factcheck_over_rewriting_the_script(project, monkeypatch):
+    _approve(project / "research.md", "источники")
     monkeypatch.setattr(preprod, "artifact_state",
                         lambda pdir, path: "approved"
                         if "script.md" not in str(path) else "draft")

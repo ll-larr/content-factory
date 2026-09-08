@@ -612,10 +612,36 @@ def refs_awaiting_review(project_dir: Path, episode: str) -> bool:
     return waiting
 
 
+def research_required(project_dir: Path) -> bool:
+    """Объявил ли жанр проекта обязательное исследование темы.
+
+    Спрашиваем карточку, а не догадываемся: у познавательного `research` — не
+    «по желанию перед идеей», а первая фаза конвейера, потому что утверждение
+    без источника там риск претензии к площадке. У повествовательных жанров
+    исследование остаётся необязательным.
+    """
+    from factory.genres import GenreError
+
+    try:
+        card = load_project(Path(project_dir) / "project.json").genre_card()
+    except (ProjectError, GenreError, OSError, ValueError):
+        return False
+    return bool(card.get("requires_research"))
+
+
 def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
-    """Первый незакрытый шаг. Порядок: story, затем эпизоды ПО ПОРЯДКУ, в каждом
-    script → characters → storyboard (спека §7: автономный режим идёт по всем)."""
+    """Первый незакрытый шаг. Порядок: research (там, где жанр его требует),
+    story, затем эпизоды ПО ПОРЯДКУ, в каждом script → factcheck → characters →
+    storyboard (спека §7: автономный режим идёт по всем)."""
     project_dir = Path(project_dir)
+
+    # Исследование идёт ПЕРЕД идеей: библия познавательного жанра, написанная
+    # раньше источников, — это выдумка, которую потом придётся переписывать.
+    # У жанров без `requires_research` шаг остаётся вне резолвера: он там не
+    # обязателен, и требовать его значило бы придумывать работу.
+    if research_required(project_dir)             and artifact_state(project_dir, project_dir / "research.md") != "approved":
+        return ("research", None)
+
     story_done = all(
         artifact_state(project_dir, project_dir / rel) == "approved"
         for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md"))

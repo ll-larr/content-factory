@@ -206,7 +206,15 @@ function renderPipe() {
         видео ${esc(d.models.video?.model || d.models.video)}</p>
     </div>
     <div class="go">
-      <button class="btn primary" id="estimate-btn">Смета эпизода</button>
+      ${d.next
+        ? `<button class="btn primary" id="run-pipeline"
+             title="${esc(d.next.kind === "paid"
+               ? "платная стадия — сначала смета"
+               : "текстовая стадия, провайдерам видео не платит")}"
+             ${d.next.kind === "unknown" ? "disabled" : ""}
+             >Запустить конвейер · ${esc(d.next.stage)}</button>`
+        : `<span class="muted">Конвейер прошёл: делать нечего или всё ждёт приёмки</span>`}
+      <button class="btn ghost" id="estimate-btn">Смета эпизода</button>
     </div>
   </div>
 
@@ -254,7 +262,10 @@ function renderPipe() {
   const arts = `<div class="tbl-wrap"><table>
     <thead><tr><th>артефакт</th><th>состояние</th><th>правки</th><th></th></tr></thead>
     <tbody>${d.artifacts.map((a) => `<tr>
-      <td class="mono">${esc(a.path)}</td>
+      <td class="mono">${a.state === "missing"
+        ? esc(a.path)
+        : `<button class="linkish artifact" data-artifact="${esc(a.path)}"
+             title="открыть">${esc(a.path)}</button>`}</td>
       <td><span class="badge s-${esc(a.state.split("_")[0])}">${esc(a.state)}</span></td>
       <td class="muted">${esc(a.feedback)}</td>
       <td>${a.state === "draft" || a.state.startsWith("stale")
@@ -313,6 +324,21 @@ function factCheckBlock(ep) {
       ${fc.passed ? "" : `<p class="note">${esc(fc.problem)}</p>`}
       ${sources}
     </div>`;
+}
+
+// Артефакт открывается той же ручкой, что отдаёт кадры и готовые серии:
+// containment проверяет сервер (`webapp.media_path`), панель только показывает.
+async function showArtifact(rel) {
+  const url = `/media/${encodeURIComponent(state.project)}/${rel}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("файл не читается");
+    const text = await res.text();
+    openDialog(`<h3 class="mono">${esc(rel)}</h3>
+      <p class="lead">Панель артефакты показывает, но не меняет: правит их
+        стадия или редактор, а status ставит только approve.</p>
+      <pre class="fc-report">${esc(text)}</pre>`, true);
+  } catch (e) { toast(e.message, true); }
 }
 
 async function showFactCheckReport() {
@@ -550,10 +576,12 @@ async function loadText() {
   if (needsModel && !state.model && models.length) state.model = models[0].id;
 }
 
-async function runTextStage(stageId, request) {
+// `episode` передаётся явно там, где стадия его не имеет: у исследования и
+// библии серии нет, и подпись «серия ep01» в журнале была бы выдумкой.
+async function runTextStage(stageId, request, episode = state.episode) {
   try {
     const { task } = await post("/api/text", {
-      project: state.project, episode: state.episode, stage: stageId,
+      project: state.project, episode, stage: stageId,
       request: request || "", engine: state.engine,
       // Модель выбирается только для OpenRouter: у агента своя настройка, и
       // подсовывать ему чужой выбор значит платить не по тому тарифу.
@@ -1094,10 +1122,25 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  const artifact = e.target.closest("[data-artifact]");
+  if (artifact) { await showArtifact(artifact.dataset.artifact); return; }
   if (e.target.closest("#fc-report")) { await showFactCheckReport(); return; }
   // Кнопка рядом с состоянием: человек, прочитавший «не пройдена», не должен
   // искать ту же стадию в полосе внизу экрана.
   if (e.target.closest("#fc-run")) { await runTextStage("factcheck", ""); return; }
+  // «Запустить конвейер» — это всегда СЛЕДУЮЩИЙ шаг резолвера: на пустом
+  // проекте он и есть первая фаза, а какая именно — решает жанр. Панель не
+  // выбирает стадию сама, иначе у конвейера появился бы второй порядок.
+  if (e.target.closest("#run-pipeline")) {
+    const next = state.data?.next;
+    if (!next) return;
+    if (next.kind === "paid") await runStage(next.stage);
+    else if (next.kind === "text") {
+      if (next.episode) state.episode = next.episode;
+      await runTextStage(next.stage, "", next.episode);
+    } else toast(`панель не умеет запускать стадию ${next.stage}`, true);
+    return;
+  }
   if (e.target.closest("#estimate-btn")) { await showEstimate(); return; }
   if (e.target.closest("#refresh-balances")) { await loadBalances(); return; }
   if (e.target.closest("#reload")) { await loadProject(); return; }
