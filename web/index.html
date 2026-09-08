@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульт конвейера</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<aside class="rail">
+  <div class="mark"><b>ПУЛЬТ</b><span>content-factory</span></div>
+
+  <div class="rail-scroll">
+    <div class="rail-block">
+      <div class="eyebrow">Проект</div>
+      <div id="projects"></div>
+    </div>
+    <div class="rail-block" id="ladder-block">
+      <div class="eyebrow">Стадии</div>
+      <div id="ladder"></div>
+    </div>
+  </div>
+
+  <div class="balances">
+    <div class="bal-head">
+      <span class="eyebrow">Балансы</span>
+      <button class="linkish" id="refresh-balances" title="Спросить провайдеров заново">обновить</button>
+    </div>
+    <div id="balances"></div>
+    <div class="budget" id="budget"></div>
+  </div>
+</aside>
+
+<div class="main">
+  <nav class="top">
+    <button class="tab" data-tab="pipe" aria-selected="true">Конвейер</button>
+    <button class="tab" data-tab="models" aria-selected="false">Модели</button>
+    <button class="tab" data-tab="voices" aria-selected="false">Голоса</button>
+    <button class="tab" data-tab="mixer" aria-selected="false">Микшер</button>
+    <button class="tab" data-tab="keys" aria-selected="false">Ключи</button>
+    <span class="spacer"></span>
+    <span id="episodes" class="chip-ep"></span>
+    <button class="icon-btn" id="theme" title="Светлая или тёмная">☾</button>
+    <button class="icon-btn" id="reload" title="Перечитать состояние">⟳</button>
+  </nav>
+
+  <div class="env-warn" id="env-warn" hidden></div>
+  <main class="page on" id="tab-pipe"></main>
+  <main class="page" id="tab-models"></main>
+  <main class="page" id="tab-voices"></main>
+  <main class="page" id="tab-mixer"></main>
+  <main class="page" id="tab-keys"></main>
+</div>
+
+<div class="composer">
+  <div class="inner">
+    <div class="ctx" id="composer-ctx"></div>
+    <textarea id="prompt" rows="2"
+      placeholder="Скажи, что делать: «сделай питч», «сценарий второй серии, больше про ворону», «раскадровку ep01»"></textarea>
+    <div class="crow">
+      <div class="slash" id="text-stages"></div>
+      <span class="spacer"></span>
+      <button class="btn primary" id="send">Поехали</button>
+    </div>
+  </div>
+</div>
+
+<div class="veil" id="veil" hidden><div id="veil-body"></div></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Окончания строк. Репозиторий разрабатывается на Windows и запускается в том
+# числе на macOS, а shell-скрипт с CRLF там не стартует вовсе: ядро читает
+# шебанг вместе с \r и сообщает «bad interpreter: /bin/bash^M».
+*.command text eol=lf
+*.sh      text eol=lf
+
+# Windows-launcher, наоборот, читается интерпретатором cmd и остаётся с CRLF.
+*.cmd     text eol=crlf

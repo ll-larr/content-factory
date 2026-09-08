@@ -1,0 +1,32 @@
+.venv/
+__pycache__/
+*.pyc
+projects/**/*.png
+projects/**/*.mp4
+projects/**/*.mp3
+projects/**/*.m4a
+projects/**/*.wav
+spike/
+.pytest_cache/
+.understand-anything/
+.env
+.env.*
+!.env.example
+graphify-out/
+
+montage/node_modules/
+montage/out/
+
+# рабочие артефакты инструментов, на чужой машине не нужны
+.superpowers/
+.claude/settings.local.json
+.playwright-mcp/
+
+# кэш каталога моделей: тянется из сети, в репозитории не нужен
+openrouter-models.json
+
+# Рабочая память проекта: планы, спеки, исследования и правила для агента.
+# На GitHub уезжает работающий продукт, а не история того, как о нём думали.
+# Файлы остаются на диске — ими пользуются будущие сессии.
+docs/
+CLAUDE.md
