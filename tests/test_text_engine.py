@@ -126,3 +126,44 @@ def test_engine_states_are_reported_for_panel(monkeypatch):
     assert states["claude-code"]["available"] is False
     assert states["claude-code"]["reason"]
     assert states["openrouter"]["available"] is True
+
+
+# --- отказ аутентификации объясняет себя ------------------------------------
+
+def test_auth_failure_names_both_remedies(monkeypatch):
+    """Сырое «API Error: 403 Request not allowed» не говорит ни про
+    `claude auth login`, ни про второй движок."""
+    import subprocess
+
+    from factory.text.engine import ClaudeCodeEngine, TextEngineError
+
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0] if a else [], 1,
+        stdout="Failed to authenticate. API Error: 403 Request not allowed",
+        stderr=""))
+
+    with pytest.raises(TextEngineError) as e:
+        ClaudeCodeEngine().complete("система", "запрос")
+
+    said = str(e.value)
+    assert "claude auth login" in said
+    assert "OPENROUTER_API_KEY" in said
+    # Исходный текст CLI не теряется: по нему человек ищет причину.
+    assert "403" in said
+
+
+def test_other_failures_are_passed_through_unchanged(monkeypatch):
+    """Объяснять то, чего не понимаем, значит прятать настоящую причину."""
+    import subprocess
+
+    from factory.text.engine import ClaudeCodeEngine, TextEngineError
+
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0] if a else [], 1, stdout="", stderr="disk full"))
+
+    with pytest.raises(TextEngineError) as e:
+        ClaudeCodeEngine().complete("система", "запрос")
+
+    assert str(e.value) == "disk full"

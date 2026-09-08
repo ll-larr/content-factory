@@ -46,6 +46,14 @@ class TextEngine:
         raise NotImplementedError
 
 
+# Признаки того, что CLI не смог аутентифицироваться. Ловим их, чтобы человек
+# получил не сырой ответ чужой программы, а то, что с этим делать: сообщения
+# вида «API Error: 401 OAuth access token has been revoked» или «403 Request
+# not allowed» не говорят ни про `claude auth login`, ни про второй движок.
+_AUTH_MARKERS = ("failed to authenticate", "oauth", "api error: 401",
+                 "api error: 403", "unauthorized", "not allowed")
+
+
 class ClaudeCodeEngine(TextEngine):
     """Агент на этой машине. Умеет искать в сети — важно для проверки фактов."""
 
@@ -79,10 +87,30 @@ class ClaudeCodeEngine(TextEngine):
             raise TextEngineError(f"claude не запустился: {e}") from None
 
         if done.returncode != 0:
+            said = (done.stderr or done.stdout or "").strip()
             raise TextEngineError(
-                (done.stderr or done.stdout or "").strip()
+                self._explain(said)
+                or said
                 or f"claude вышел кодом {done.returncode}")
         return done.stdout
+
+    @staticmethod
+    def _explain(said: str) -> str:
+        """Отказ аутентификации — словами и с лекарством; иначе пусто.
+
+        `claude auth status` на такой поломке отвечает `loggedIn: true`
+        (проверено 2026-09-08), то есть спросить состояние заранее нельзя:
+        единственный честный сигнал — сам отказавший вызов. Поэтому объясняем
+        здесь, а не гасим движок в `available()`.
+        """
+        low = said.lower()
+        if not any(marker in low for marker in _AUTH_MARKERS):
+            return ""
+        return (f"Claude Code не авторизован ({said}). "
+                "Почини одним из двух: выполни `claude auth login` в терминале "
+                "(команда открывает браузер, поэтому из панели её не запустить) "
+                f"— либо переключись на второй движок: задай {API_KEY_ENV} во "
+                "вкладке «Ключи» и выбери модель по ключу.")
 
 
 class OpenRouterEngine(TextEngine):
