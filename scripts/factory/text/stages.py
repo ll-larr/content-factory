@@ -236,6 +236,51 @@ def _build_task(project_dir: Path, project, stage: Stage,
     return "\n".join(parts)
 
 
+# --- вызов модели ---------------------------------------------------------
+
+# Черновик последнего ответа стадии. Точка в начале имени — это рабочий файл, а
+# не артефакт проекта: одобрять там нечего, и в перечне текстов он не нужен.
+LAST_ANSWER = ".last-answer.md"
+
+
+def ask(engine, system: str, user: str, *, project_dir: Path | str,
+        stage_id: str, episode: str | None = None,
+        model: str | None = None) -> str:
+    """Спросить движок и СОХРАНИТЬ сырой ответ рядом с проектом.
+
+    Единственное место, где текстовая стадия зовёт движок: у ответа три
+    потребителя (CLI, панель, проверка фактов), и класть черновик в каждом из
+    них значило бы однажды забыть в одном.
+
+    Зачем черновик: ответ стоит токенов, а живёт до сих пор только в журнале —
+    журнал панели ограничен четырьмястами строками, и получасовой сценарий,
+    не разобравшийся по формату, терял начало. Файл переживает и это, и
+    закрытую вкладку.
+    """
+    answer = engine.complete(system, user, model=model)
+    _save_answer(Path(project_dir), stage_id, episode, answer)
+    return answer
+
+
+def _save_answer(project_dir: Path, stage_id: str, episode: str | None,
+                 answer: str) -> None:
+    """Записать черновик ответа. Не вышло — не беда: стадия важнее черновика."""
+    import datetime as dt
+
+    target = project_dir
+    if episode:
+        target = target / "episodes" / episode
+    head = (f"<!-- стадия {stage_id}"
+            + (f" · серия {episode}" if episode else "")
+            + f" · {dt.datetime.now().isoformat(timespec='seconds')} -->\n\n")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / LAST_ANSWER).write_text(head + (answer or ""),
+                                          encoding="utf-8")
+    except OSError:
+        pass
+
+
 # --- разбор ---------------------------------------------------------------
 
 def parse_files(answer: str) -> dict[str, str]:

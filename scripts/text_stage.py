@@ -123,7 +123,12 @@ def main(argv=None) -> int:
     print("думает…")
 
     try:
-        answer = engine.complete(prompt.system, prompt.user, model=args.model)
+        # Через stages.ask, а не напрямую: он же кладёт сырой ответ рядом с
+        # проектом. Ответ стоит токенов, и терять его из-за неверного формата
+        # или закрытой вкладки нельзя.
+        answer = text_stages.ask(engine, prompt.system, prompt.user,
+                                 project_dir=project_dir, stage_id=args.stage,
+                                 episode=args.episode, model=args.model)
     except TextEngineError as e:
         print(f"движок отказал: {e}")
         return 1
@@ -141,7 +146,11 @@ def main(argv=None) -> int:
     except text_stages.StageError as e:
         print(f"ответ модели не разложить: {e}")
         # Ответ печатаем целиком: за него уже заплачено токенами, и терять его
-        # из-за неверного формата — значит платить второй раз.
+        # из-за неверного формата — значит платить второй раз. Журнал панели
+        # при этом ограничен, поэтому называем и файл, где ответ лежит целиком.
+        draft = (project_dir / "episodes" / args.episode / text_stages.LAST_ANSWER
+                 if args.episode else project_dir / text_stages.LAST_ANSWER)
+        print(f"черновик ответа целиком: {draft}")
         print()
         print(answer.strip())
         return 1

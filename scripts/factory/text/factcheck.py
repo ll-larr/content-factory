@@ -439,7 +439,9 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     except text_stages.StageError as e:
         raise FactCheckError(str(e)) from None
     try:
-        answer = engine.complete(first.system, first.user, model=model)
+        answer = text_stages.ask(engine, first.system, first.user,
+                                 project_dir=project_dir, stage_id=STAGE_ID,
+                                 episode=episode, model=model)
     except TextEngineError as e:
         raise FactCheckError(str(e)) from None
     claims = parse_claims(answer)
@@ -459,7 +461,9 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     except text_stages.StageError as e:
         raise FactCheckError(str(e)) from None
     try:
-        answer = engine.complete(second.system, second.user, model=model)
+        answer = text_stages.ask(engine, second.system, second.user,
+                                 project_dir=project_dir, stage_id=STAGE_ID,
+                                 episode=episode, model=model)
     except TextEngineError as e:
         raise FactCheckError(str(e)) from None
 

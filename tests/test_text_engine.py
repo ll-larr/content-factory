@@ -210,3 +210,88 @@ def test_timeout_limit_comes_from_the_environment(monkeypatch):
 def test_default_timeout_survives_a_long_stage():
     """Сценарий получасовой серии и исследование с поиском идут дольше 15 минут."""
     assert eng.DEFAULT_TIMEOUT_SECONDS >= 3600
+
+
+# --- лимит сессии: подождать и вернуться (2026-09-09) -----------------------
+
+class FakeRun:
+    """subprocess.run, отдающий заготовленные результаты по одному на вызов."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = 0
+
+    def __call__(self, cmd, **kwargs):
+        self.calls += 1
+        import types
+        code, out, err = self.results[min(self.calls - 1, len(self.results) - 1)]
+        return types.SimpleNamespace(returncode=code, stdout=out, stderr=err)
+
+
+LIMIT_SAID = "Claude usage limit reached. Your limit will reset at 15:00"
+
+
+def test_usage_limit_waits_and_runs_the_stage_again(monkeypatch):
+    """Лимит сессии — не отказ стадии, а пауза: она кончится сама.
+
+    Человек уходит, лимит сбрасывается, конвейер продолжает без него.
+    """
+    import subprocess
+
+    run = FakeRun((1, "", LIMIT_SAID), (0, "готовый сценарий", ""))
+    slept = []
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(eng.time, "sleep", lambda s: slept.append(s))
+
+    answer = eng.ClaudeCodeEngine().complete("система", "задание")
+
+    assert answer == "готовый сценарий"
+    assert run.calls == 2, "стадия повторена после ожидания"
+    assert slept and slept[0] > 0
+
+
+def test_waiting_for_limits_has_a_ceiling(monkeypatch):
+    """Ждать сутки молча нельзя: потолок ожидания объявлен и настраивается."""
+    import subprocess
+
+    monkeypatch.setenv(eng.LIMIT_WAIT_ENV, "0")
+    run = FakeRun((1, "", LIMIT_SAID))
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(eng.time, "sleep", lambda s: pytest.fail("ждать запрещено"))
+
+    with pytest.raises(eng.TextEngineError) as e:
+        eng.ClaudeCodeEngine().complete("система", "задание")
+
+    said = str(e.value)
+    assert "лимит" in said.lower()
+    assert eng.LIMIT_WAIT_ENV in said, "как разрешить ожидание — в самом отказе"
+
+
+def test_reset_time_is_read_from_the_message():
+    """Ждём до названного времени, а не вслепую по интервалу."""
+    import datetime as dt
+
+    now = dt.datetime(2026, 9, 9, 14, 30)
+    seconds = eng.wait_for_limit(LIMIT_SAID, now=now)
+
+    assert 25 * 60 <= seconds <= 35 * 60, seconds
+
+
+def test_reset_time_in_the_past_means_an_interval_not_a_day(dtnow=None):
+    """CLI печатает время в своей зоне: «уже прошло» — обычно расхождение зон.
+
+    Перенос на завтра встал бы конвейером на сутки там, где хватает десяти
+    минут ожидания.
+    """
+    import datetime as dt
+
+    now = dt.datetime(2026, 9, 9, 16, 0)
+    assert eng.wait_for_limit(LIMIT_SAID, now=now) == eng.RETRY_INTERVAL_SECONDS
+
+
+def test_unparsed_message_falls_back_to_an_interval():
+    """Формулировка чужой программы может измениться — это не повод сдаваться."""
+    seconds = eng.wait_for_limit("limit reached, try later")
+    assert seconds == eng.RETRY_INTERVAL_SECONDS

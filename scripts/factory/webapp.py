@@ -1526,7 +1526,9 @@ def run_text_stage(project_dir: Path, stage_id: str, *, request: str = "",
 
     try:
         chosen = text_engine.pick_engine(engine)
-        answer = chosen.complete(prompt.system, prompt.user, model=model)
+        answer = text_stages_mod.ask(chosen, prompt.system, prompt.user,
+                                     project_dir=project_dir, stage_id=stage_id,
+                                     episode=episode, model=model)
     except TextEngineError as e:
         raise WebappError(str(e)) from None
 

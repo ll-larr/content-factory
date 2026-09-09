@@ -10,10 +10,13 @@ OpenRouter, и модель он выбирает сам.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -35,12 +38,88 @@ TIMEOUT_ENV = "FACTORY_TEXT_TIMEOUT"
 
 def timeout_seconds() -> int:
     """Сколько ждать ответа движка. Негодное значение — не повод падать."""
-    raw = os.environ.get(TIMEOUT_ENV, "")
+    return _env_seconds(TIMEOUT_ENV, DEFAULT_TIMEOUT_SECONDS)
+
+
+# Лимит сессии — это ПАУЗА, а не отказ: он кончается сам, по времени. Поэтому
+# стадия не проваливается, а ждёт и запускается снова — человек уходит, лимит
+# сбрасывается, конвейер продолжает без него.
+#
+# Сколько всего готовы ждать за одну стадию. Шесть часов покрывают обычное окно
+# сброса; ноль запрещает ожидание вовсе (нужно тем, кто хочет узнать об отказе
+# сразу, и тестам).
+DEFAULT_LIMIT_WAIT_SECONDS = 6 * 3600
+LIMIT_WAIT_ENV = "FACTORY_LIMIT_WAIT"
+
+# Пауза между повторами, когда время сброса из сообщения вычитать не удалось.
+# Формулировку пишет чужая программа, и она может смениться — тогда работает
+# слепой интервал, а не отказ.
+RETRY_INTERVAL_SECONDS = 600
+
+# Запас после названного времени сброса: попасть секунда в секунду значит
+# получить тот же отказ и ждать ещё круг.
+RESET_MARGIN_SECONDS = 60
+
+# Признаки исчерпанного лимита в выводе CLI. Список открытый: чужие сообщения
+# меняются, и лишний повтор дешевле проваленной стадии.
+_LIMIT_MARKERS = ("usage limit", "limit reached", "limit will reset",
+                  "rate limit", "429", "too many requests")
+
+_RESET_HHMM = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2}):(\d{2})", re.IGNORECASE)
+_RESET_HOUR = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2})\s*(am|pm)", re.IGNORECASE)
+
+
+def _env_seconds(name: str, default: int) -> int:
+    raw = os.environ.get(name, "")
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return DEFAULT_TIMEOUT_SECONDS
-    return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
+        return default
+    return value if value >= 0 else default
+
+
+def limit_wait_seconds() -> int:
+    """Сколько всего готовы ждать сброса лимита за одну стадию."""
+    return _env_seconds(LIMIT_WAIT_ENV, DEFAULT_LIMIT_WAIT_SECONDS)
+
+
+def is_limit(said: str) -> bool:
+    """Похоже ли это на исчерпанный лимит, а не на поломку."""
+    low = (said or "").lower()
+    return any(marker in low for marker in _LIMIT_MARKERS)
+
+
+def wait_for_limit(said: str, now: dt.datetime | None = None) -> int:
+    """Сколько секунд ждать по сообщению об исчерпанном лимите.
+
+    Claude Code называет время сброса («Your limit will reset at 15:00») —
+    ждём до него, а не вслепую: слепой интервал либо будит нас рано и получает
+    тот же отказ, либо держит конвейер стоящим после того, как лимит вернулся.
+    Время не распозналось — работает интервал.
+    """
+    now = now or dt.datetime.now()
+    match = _RESET_HHMM.search(said or "")
+    if match:
+        hour, minute = int(match.group(1)), int(match.group(2))
+    else:
+        match = _RESET_HOUR.search(said or "")
+        if not match:
+            return RETRY_INTERVAL_SECONDS
+        hour = int(match.group(1)) % 12
+        minute = 0
+        if match.group(2).lower() == "pm":
+            hour += 12
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return RETRY_INTERVAL_SECONDS
+
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        # Названное время уже прошло. Переносить его на завтра нельзя: CLI
+        # печатает время в СВОЁЙ зоне («resets at 3pm (Europe/Moscow)»), и при
+        # расхождении зон мы бы встали на сутки вместо десяти минут. Считаем,
+        # что сброс либо уже был, либо вот-вот, и проверяем интервалом.
+        return RETRY_INTERVAL_SECONDS
+    return int((target - now).total_seconds()) + RESET_MARGIN_SECONDS
 
 
 class TextEngineError(RuntimeError):
@@ -114,9 +193,38 @@ class ClaudeCodeEngine(TextEngine):
         if model:
             cmd += ["--model", model]
 
+        waited = 0
+        while True:
+            done = self._run(cmd, prompt)
+            if done.returncode == 0:
+                return done.stdout
+            said = (done.stderr or done.stdout or "").strip()
+            if not is_limit(said):
+                raise TextEngineError(
+                    self._explain(said)
+                    or said
+                    or f"claude вышел кодом {done.returncode}")
+
+            # Лимит сессии кончается сам. Ждём и повторяем стадию целиком:
+            # продолжить оборванный ответ нельзя — модель не возобновляет
+            # начатое, а на нашей стороне ничего не осталось.
+            allowed = limit_wait_seconds()
+            pause = wait_for_limit(said)
+            if waited + pause > allowed:
+                raise TextEngineError(
+                    f"лимит сессии исчерпан, а ждать больше нельзя: потолок "
+                    f"ожидания {allowed} с (переменная {LIMIT_WAIT_ENV}, "
+                    f"секунды), уже прождали {waited} с. Сказано: {said}")
+            print(f"лимит сессии исчерпан: жду {pause} с и повторяю стадию "
+                  f"({said})", flush=True)
+            time.sleep(pause)
+            waited += pause
+
+    def _run(self, cmd: list[str], prompt: str):
+        """Один запуск CLI. Шов наружу — здесь, и он один."""
         limit = timeout_seconds()
         try:
-            done = subprocess.run(
+            return subprocess.run(
                 cmd, input=prompt, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=limit)
         except subprocess.TimeoutExpired as e:
@@ -129,14 +237,6 @@ class ClaudeCodeEngine(TextEngine):
                 f"(секунды) и запусти заново. {_tail(e.stdout)}") from None
         except (OSError, subprocess.SubprocessError) as e:
             raise TextEngineError(f"claude не запустился: {e}") from None
-
-        if done.returncode != 0:
-            said = (done.stderr or done.stdout or "").strip()
-            raise TextEngineError(
-                self._explain(said)
-                or said
-                or f"claude вышел кодом {done.returncode}")
-        return done.stdout
 
     @staticmethod
     def _explain(said: str) -> str:

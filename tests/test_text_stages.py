@@ -149,3 +149,44 @@ def test_pitch_writes_nothing(project):
     assert stages.STAGES["pitch"].outputs == ()
     with pytest.raises(stages.StageError):
         stages.write_files("pitch", project, {"bible/idea.md": "x"})
+
+
+# --- сырой ответ стадии остаётся на диске (2026-09-09) ---------------------
+
+class SavingEngine:
+    name = "fake"
+    label = "фейковый движок"
+
+    def __init__(self, answer="=== FILE: bible/idea.md ===\nтело\n=== END FILE ==="):
+        self.answer = answer
+
+    def complete(self, system, user, *, model=None):
+        return self.answer
+
+
+def test_answer_is_saved_next_to_the_project(project):
+    """За ответ уже заплачено токенами: он не должен жить только в консоли."""
+    answer = stages.ask(SavingEngine(), "система", "задание",
+                        project_dir=project, stage_id="story")
+
+    saved = project / stages.LAST_ANSWER
+    assert answer in saved.read_text(encoding="utf-8")
+    assert "story" in saved.read_text(encoding="utf-8"), "видно, чей это ответ"
+
+
+def test_episode_answer_is_saved_inside_the_episode(project):
+    stages.ask(SavingEngine(), "система", "задание", project_dir=project,
+               stage_id="script", episode="ep01")
+
+    assert (project / "episodes" / "ep01" / stages.LAST_ANSWER).is_file()
+
+
+def test_saving_never_breaks_the_stage(project, monkeypatch):
+    """Не записался черновик — стадия всё равно должна отдать ответ."""
+    def boom(*a, **k):
+        raise OSError("диск только для чтения")
+
+    monkeypatch.setattr(stages.Path, "write_text", boom)
+
+    assert stages.ask(SavingEngine("ответ"), "с", "з", project_dir=project,
+                      stage_id="story") == "ответ"
