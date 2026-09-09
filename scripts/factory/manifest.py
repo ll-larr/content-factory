@@ -16,7 +16,7 @@ from pathlib import Path
 STATUSES = {"pending", "generating", "generated", "done", "rejected",
             "accepted_with_notes"}
 KNOWN_FIELDS = {"file", "job_id", "credits_spent", "reject_reason", "notes",
-                "attempts", "prompt_sent", "card_sha"}
+                "attempts", "prompt_sent", "card_sha", "accepted_by"}
 ALLOWED = {
     "pending": {"generating"},
     "generating": {"generated", "pending"},

@@ -50,6 +50,10 @@ class TaskRunner:
         self._task: dict | None = None
         self._reader: threading.Thread | None = None
         self._cancelling = False
+        # Кого позвать, когда задача кончилась. Через него автономный режим
+        # продолжает конвейер: решение «что дальше» принадлежит СЕРВЕРУ, а не
+        # вкладке браузера — закрытая вкладка не должна останавливать прогон.
+        self.on_finished = None
 
     # --- чтение ---
 
@@ -164,6 +168,18 @@ class TaskRunner:
                     # данные, 3 — закрытый гейт. Показать их человеку важнее,
                     # чем сказать «не получилось».
                     task["status"] = "failed"
+            hook, snapshot = self.on_finished, dict(task)
+            snapshot["lines"] = task["lines"]
+
+        # Водитель зовётся ВНЕ замка: он запускает следующую задачу, а `start`
+        # берёт тот же замок. И его поломка не должна уносить чтение вывода —
+        # задача уже закончилась, её статус проставлен.
+        if hook is not None:
+            try:
+                hook(snapshot)
+            except Exception as e:                      # noqa: BLE001
+                with self._lock:
+                    task["lines"].append(f"— автономный режим сорвался: {e}")
 
     def _beat(self, task: dict) -> None:
         """Отмечать в журнале, что молчащая стадия ещё идёт.

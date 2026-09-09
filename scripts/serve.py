@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory import environment, webapp                                    # noqa: E402
+from factory import autopilot, environment, webapp                         # noqa: E402
 from factory.env import load_env                              # noqa: E402
 from factory.tasks import TaskRunner                          # noqa: E402
 from factory.webapp import WebappError                        # noqa: E402
@@ -38,6 +38,12 @@ WEB_DIR = ROOT / "web"
 
 # Один реестр задач на сервер: задача принадлежит ему, а не вкладке браузера.
 RUNNER = TaskRunner()
+
+# Автономный режим ведёт СЕРВЕР: закончилась задача — водитель решает, что
+# дальше, одобряет чекпоинты за человека и запускает следующий шаг. В браузере
+# этой логики нет: закрытая вкладка не должна останавливать прогон.
+RUNNER.on_finished = lambda task: autopilot.step(
+    RUNNER, PROJECTS_ROOT, task, repo_root=ROOT)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -179,6 +185,17 @@ class Handler(BaseHTTPRequestHandler):
                         return self._error(409, str(e))
                     raise
                 return self._json({"task": task})
+            if url.path == "/api/autopilot":
+                # Начать автономный прогон: дальше сервер ведёт его сам, и
+                # закрытая вкладка этому не мешает.
+                try:
+                    return self._json(autopilot.kick(
+                        RUNNER, PROJECTS_ROOT, payload.get("project", ""),
+                        repo_root=ROOT))
+                except WebappError as e:
+                    if RUNNER.is_running():
+                        return self._error(409, str(e))
+                    raise
             if url.path == "/api/cancel":
                 return self._json({"cancelled": RUNNER.cancel(),
                                    "task": RUNNER.current()})

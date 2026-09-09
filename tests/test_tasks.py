@@ -153,3 +153,39 @@ def test_chatty_stage_is_not_interrupted_by_heartbeats():
 
     lines = runner.current()["lines"]
     assert not any("идёт" in line for line in lines), lines
+
+
+def test_finished_task_calls_the_hook_once():
+    """Кому продолжать конвейер, решает сервер — значит и знать об окончании
+    задачи он должен сам, а не через опрос из браузера."""
+    seen = []
+    runner = TaskRunner(journal_size=5, heartbeat_seconds=0)
+    runner.on_finished = lambda task: seen.append(task["status"])
+    try:
+        runner.start([sys.executable, "-c", "print('готово')"])
+        wait_finished(runner)
+    finally:
+        runner.cancel()
+
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.02)
+    assert seen == ["done"]
+
+
+def test_hook_failure_does_not_break_the_runner():
+    """Сорвавшийся водитель не должен уносить с собой чтение вывода."""
+    runner = TaskRunner(journal_size=5, heartbeat_seconds=0)
+
+    def boom(task):
+        raise RuntimeError("водитель сломался")
+
+    runner.on_finished = boom
+    try:
+        runner.start([sys.executable, "-c", "print('готово')"])
+        snap = wait_finished(runner)
+    finally:
+        runner.cancel()
+
+    assert snap["status"] == "done"

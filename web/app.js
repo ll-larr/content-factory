@@ -530,7 +530,6 @@ async function pollTask() {
         ? `Стадия ${task.stage} завершена`
         : `Стадия ${task.stage}: ${task.status}, код ${task.exit_code}`,
         task.status !== "done");
-      if (task.status === "done") await continuePipeline(task);
     }
   } catch (e) {
     toast(e.message, true);
@@ -614,55 +613,29 @@ function confirmAutonomous() {
   });
 }
 
-/* Одобрить всё, что ждёт человека, — только в автономном режиме и только
-   пометив, что смотрел не человек. Возвращает false, если одобрить что-то не
-   вышло: тогда конвейер останавливается, а причина уходит в тост. Отказ здесь
-   штатен — например, факты серии ещё не проверены. */
-async function autoApprove() {
-  const waiting = state.data?.awaiting_text || [];
-  if (!waiting.length) return true;
-  for (const art of waiting) {
-    try {
-      await post("/api/approve",
-                 { project: state.project, path: art.path, auto: true });
-      toast(`Одобрено автономно: ${art.path}`);
-    } catch (e) {
-      toast(`Конвейер остановлен на ${art.path}: ${e.message}`, true);
-      return false;
-    }
-  }
-  await loadProject();
-  return true;
-}
+/* Автономный режим ведёт СЕРВЕР (`factory/autopilot.py`): он одобряет
+   чекпоинты, принимает сгенерированное и запускает следующий шаг сам. В
+   браузере этой логики нет намеренно — закрытая вкладка не должна
+   останавливать прогон, а две цепочки (тут и там) спорили бы за одну задачу. */
 
-/* Автономный режим: следующий шаг запускается сам, без подтверждения сметы.
-   Останавливаемся на трёх вещах — делать нечего, стадия отказала (сюда мы уже
-   не попадём: статус не done), и «резолвер просит то же самое». Последнее
-   означает ожидание ЧЕЛОВЕКА: например, сценарий написан, но не одобрен, и
-   повтор стадии переписывал бы его по кругу за деньги и токены. */
-async function continuePipeline(finished) {
-  if (state.data?.autonomy !== "full") return;
-  // Написанный артефакт ждёт человека, и резолвер честно молчит, пока его не
-  // одобрили. В автономном режиме одобряет сам режим — с пометкой
-  // `approved_by: auto`, чтобы по файлу было видно, что живой человек его не
-  // читал. Гейты при этом никуда не деваются: непроверенный сценарий
-  // познавательного жанра approve всё равно отобьёт.
-  if (!(await autoApprove())) return;
-  const next = state.data?.next;
-  if (!next) { toast("Конвейер: делать больше нечего"); return; }
-  if (next.kind === "unknown") {
-    toast(`Конвейер остановлен: панель не умеет запускать ${next.stage}`, true);
-    return;
-  }
-  const step = `${next.run || next.stage}/${next.episode || ""}`;
-  if (step === `${finished.stage}/${finished.episode || ""}`) {
-    toast(`Конвейер остановлен: ${next.stage} просит того же — нужен человек `
-      + "(одобрить артефакт или принять генерацию)", true);
-    return;
-  }
-  if (next.episode) state.episode = next.episode;
-  if (next.kind === "paid") await startStage(next.run || next.stage);
-  else await runTextStage(next.run || next.stage, "", next.episode);
+/* Попросить сервер начать автономный прогон. Смета показана и подтверждена
+   здесь же; дальше вопросов не будет — в этом и смысл режима. */
+async function startAutonomous() {
+  if (!(await confirmAutonomous())) return;
+  try {
+    const result = await post("/api/autopilot", { project: state.project });
+    (result.lines || []).forEach((line) => toast(line));
+    if (result.started) {
+      state.task = result.started;
+      renderTask();
+      clearTimeout(state.poll);
+      state.poll = setTimeout(pollTask, 700);
+      toast(`Запущено автономно: ${result.started.stage}`);
+    } else {
+      toast("Автономный режим: запускать нечего — смотри журнал");
+    }
+    await loadProject();
+  } catch (e) { toast(e.message, true); }
 }
 
 async function runStage(stage) {
@@ -1387,17 +1360,13 @@ document.addEventListener("click", async (e) => {
     // выбрал его тумблером, а тратами там правит потолок бюджета. В ручном
     // режиме смета показывается, как и раньше.
     const auto = state.data?.autonomy === "full";
-    // Автономный прогон спрашивает человека ОДИН раз — здесь, показав смету
-    // всего остатка. Дальше он не спрашивает вовсе: в этом и смысл режима.
-    if (auto && !(await confirmAutonomous())) return;
-    // Первый шаг автономного прогона может упираться в неодобренный артефакт:
-    // резолвер молчит, пока его ждут. Одобряем сами — тем же способом, что и
-    // между шагами, — и только потом смотрим, что дальше.
-    if (auto && !(await autoApprove())) return;
+    // Автономный прогон ведёт СЕРВЕР: панель показывает смету, спрашивает один
+    // раз и просит начать. Своей цепочки шагов у браузера нет — закрытая
+    // вкладка не должна её обрывать.
+    if (auto) { await startAutonomous(); return; }
     const next = state.data?.next;
     if (!next) { toast("Делать нечего: всё закрыто или ждёт приёмки"); return; }
-    if (next.kind === "paid" && auto) await startStage(next.run || next.stage);
-    else if (next.kind === "paid") await runStage(next.run || next.stage);
+    if (next.kind === "paid") await runStage(next.run || next.stage);
     else if (next.kind === "text") {
       if (next.episode) state.episode = next.episode;
       await runTextStage(next.run || next.stage, "", next.episode);
