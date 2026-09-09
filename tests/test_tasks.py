@@ -117,3 +117,39 @@ def test_snapshot_is_a_copy(runner):
     snap["lines"].append("подделка")
 
     assert "подделка" not in runner.current()["lines"]
+
+
+# --- признаки жизни на долгой стадии (2026-09-09) --------------------------
+
+def test_silent_stage_gets_a_heartbeat_in_the_journal():
+    """Текстовая стадия молчит до самого ответа — иногда десятки минут.
+
+    Пустой журнал в это время неотличим от зависшей панели: живой прогон
+    2026-09-09 закончился таймаутом движка после четверти часа тишины.
+    """
+    runner = TaskRunner(journal_size=20, heartbeat_seconds=0.05)
+    try:
+        runner.start([sys.executable, "-c", "import time; time.sleep(0.6)"])
+        wait_finished(runner)
+    finally:
+        runner.cancel()
+
+    lines = runner.current()["lines"]
+    assert any("идёт" in line for line in lines), lines
+
+
+def test_chatty_stage_is_not_interrupted_by_heartbeats():
+    """Стадия, которая сама печатает прогресс, в подсказках не нуждается."""
+    runner = TaskRunner(journal_size=50, heartbeat_seconds=0.2)
+    try:
+        runner.start([sys.executable, "-c",
+                      "import time\n"
+                      "for i in range(6):\n"
+                      "    print('снято', i, flush=True)\n"
+                      "    time.sleep(0.05)\n"])
+        wait_finished(runner)
+    finally:
+        runner.cancel()
+
+    lines = runner.current()["lines"]
+    assert not any("идёт" in line for line in lines), lines

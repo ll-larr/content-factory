@@ -20,14 +20,49 @@ import urllib.request
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 API_KEY_ENV = "OPENROUTER_API_KEY"
 
-# Текстовая стадия — это несколько тысяч слов сценария плюс входные артефакты.
-# Минуты ожидания здесь норма, и обрывать их по короткому таймауту значит платить
-# за токены и выбрасывать результат.
-TIMEOUT_SECONDS = 900
+# Текстовая стадия — это несколько тысяч слов сценария плюс входные артефакты, а
+# у познавательного жанра ещё и поиск по источникам. Часы тут не норма, но
+# десятки минут — да, и обрывать их значит платить за токены и выбрасывать
+# результат. Потолок был 900 с; живой прогон 2026-09-09 упёрся в него на
+# исследовании получасовой серии.
+DEFAULT_TIMEOUT_SECONDS = 3600
+
+# Переменная окружения, которой потолок поднимают под конкретный прогон. Стадии
+# бывают разной длины, и зашитое число однажды окажется мало любому значению;
+# имя печатается в самом отказе, чтобы человек не искал его по коду.
+TIMEOUT_ENV = "FACTORY_TEXT_TIMEOUT"
+
+
+def timeout_seconds() -> int:
+    """Сколько ждать ответа движка. Негодное значение — не повод падать."""
+    raw = os.environ.get(TIMEOUT_ENV, "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
 
 
 class TextEngineError(RuntimeError):
     """Движок не может выполнить запрос — и объясняет почему."""
+
+
+# Сколько показать из недописанного ответа. Столько же, сколько показывает
+# проверка фактов, разбирая ответ: у этих хвостов одна работа — не дать
+# человеку гадать, что там происходило.
+TAIL_CHARS = 400
+
+
+def _tail(text) -> str:
+    """Хвост того, что движок успел написать; пусто — так и скажем."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    text = (text or "").strip()
+    if not text:
+        return "Написать он ничего не успел."
+    if len(text) > TAIL_CHARS:
+        text = "…" + text[-TAIL_CHARS:]
+    return "Вот что он успел написать:\n" + text
 
 
 class TextEngine:
@@ -79,10 +114,19 @@ class ClaudeCodeEngine(TextEngine):
         if model:
             cmd += ["--model", model]
 
+        limit = timeout_seconds()
         try:
             done = subprocess.run(
                 cmd, input=prompt, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=TIMEOUT_SECONDS)
+                encoding="utf-8", errors="replace", timeout=limit)
+        except subprocess.TimeoutExpired as e:
+            # Процесс, проработавший четверть часа, «не запустился» — враньё, и
+            # именно его человек прочитал 2026-09-09. Написанное к этому
+            # моменту не выбрасываем: за него уже заплачено токенами.
+            raise TextEngineError(
+                f"claude не ответил за {limit} с и был прерван. Стадия может "
+                f"идти дольше — подними потолок переменной {TIMEOUT_ENV} "
+                f"(секунды) и запусти заново. {_tail(e.stdout)}") from None
         except (OSError, subprocess.SubprocessError) as e:
             raise TextEngineError(f"claude не запустился: {e}") from None
 
@@ -135,7 +179,7 @@ class OpenRouterEngine(TextEngine):
                      # проходит, но в их статистике проект безымянный.
                      "X-Title": "content-factory"})
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_seconds()) as resp:
                 return json.loads(resp.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace") if hasattr(e, "read") else ""

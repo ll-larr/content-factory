@@ -26,6 +26,13 @@ from collections import deque
 # провайдера — в терминале и в файлах проекта, дублировать его в RAM незачем.
 JOURNAL_SIZE = 400
 
+# Как часто напоминать, что стадия жива, когда она сама ничего не печатает.
+# Текстовая стадия молчит до самого ответа модели — десятки минут на сценарии
+# получасовой серии, — и пустой журнал в это время неотличим от зависшей
+# панели: живой прогон 2026-09-09 оборвался по таймауту движка после четверти
+# часа тишины, и до этого момента на экране не было ничего.
+HEARTBEAT_SECONDS = 60
+
 
 class TaskBusyError(RuntimeError):
     """Задача уже идёт. Вторую не запускаем — см. модульную доку."""
@@ -34,8 +41,10 @@ class TaskBusyError(RuntimeError):
 class TaskRunner:
     """Реестр на одну задачу: запуск, снимок состояния, отмена."""
 
-    def __init__(self, journal_size: int = JOURNAL_SIZE) -> None:
+    def __init__(self, journal_size: int = JOURNAL_SIZE,
+                 heartbeat_seconds: float = HEARTBEAT_SECONDS) -> None:
         self._journal_size = journal_size
+        self._heartbeat = heartbeat_seconds
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._task: dict | None = None
@@ -86,6 +95,9 @@ class TaskRunner:
                 "exit_code": None,
                 "started_at": time.time(),
                 "finished_at": None,
+                # Когда стадия в последний раз подала голос сама. По нему
+                # решается, нужна ли отметка о том, что она ещё идёт.
+                "last_output": time.time(),
             }
 
             # stderr в тот же поток: человек читает ОДИН журнал, разделять
@@ -102,6 +114,9 @@ class TaskRunner:
             self._reader = threading.Thread(
                 target=self._pump, args=(proc, task), daemon=True)
             self._reader.start()
+            if self._heartbeat > 0:
+                threading.Thread(target=self._beat, args=(task,),
+                                 daemon=True).start()
 
             snap = dict(task)
             snap["lines"] = list(task["lines"])
@@ -134,6 +149,7 @@ class TaskRunner:
                 for line in proc.stdout:
                     with self._lock:
                         task["lines"].append(line.rstrip("\n"))
+                        task["last_output"] = time.time()
         finally:
             code = proc.wait()
             with self._lock:
@@ -148,6 +164,27 @@ class TaskRunner:
                     # данные, 3 — закрытый гейт. Показать их человеку важнее,
                     # чем сказать «не получилось».
                     task["status"] = "failed"
+
+    def _beat(self, task: dict) -> None:
+        """Отмечать в журнале, что молчащая стадия ещё идёт.
+
+        Только МОЛЧАЩАЯ: стадия, которая сама печатает прогресс, в подсказках
+        не нуждается, а лишние строки вытеснили бы из журнала настоящие — он
+        ограничен по длине.
+        """
+        while True:
+            time.sleep(min(self._heartbeat, 1.0))
+            with self._lock:
+                if task["status"] != "running":
+                    return
+                now = time.time()
+                if now - task["last_output"] < self._heartbeat:
+                    continue
+                minutes = int((now - task["started_at"]) // 60)
+                task["lines"].append(
+                    f"— идёт {minutes} мин, стадия ещё думает" if minutes
+                    else "— идёт, стадия ещё думает")
+                task["last_output"] = now
 
     # --- отмена ---
 

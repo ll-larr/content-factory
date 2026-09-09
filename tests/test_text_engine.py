@@ -143,8 +143,8 @@ def test_auth_failure_names_both_remedies(monkeypatch):
         stdout="Failed to authenticate. API Error: 403 Request not allowed",
         stderr=""))
 
-    with pytest.raises(TextEngineError) as e:
-        ClaudeCodeEngine().complete("система", "запрос")
+    with pytest.raises(eng.TextEngineError) as e:
+        eng.ClaudeCodeEngine().complete("система", "запрос")
 
     said = str(e.value)
     assert "claude auth login" in said
@@ -163,7 +163,50 @@ def test_other_failures_are_passed_through_unchanged(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
         a[0] if a else [], 1, stdout="", stderr="disk full"))
 
-    with pytest.raises(TextEngineError) as e:
-        ClaudeCodeEngine().complete("система", "запрос")
+    with pytest.raises(eng.TextEngineError) as e:
+        eng.ClaudeCodeEngine().complete("система", "запрос")
 
     assert str(e.value) == "disk full"
+
+
+# --- долгие стадии (2026-09-09) --------------------------------------------
+
+def test_timeout_is_named_as_a_timeout_not_as_a_failed_start(monkeypatch):
+    """«claude не запустился» про процесс, проработавший 15 минут, — враньё.
+
+    Живой прогон 2026-09-09: исследование познавательного жанра не уложилось в
+    900 с, и человек получил сообщение о незапустившейся команде.
+    """
+    import subprocess
+
+    def timeout(*a, **k):
+        raise subprocess.TimeoutExpired(cmd=["claude", "-p"], timeout=900,
+                                        output="я успел написать вот столько")
+
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", timeout)
+
+    with pytest.raises(eng.TextEngineError) as e:
+        eng.ClaudeCodeEngine().complete("система", "задание")
+
+    said = str(e.value)
+    assert "не запустился" not in said
+    assert "я успел написать вот столько" in said, "написанное не выбрасываем"
+    assert eng.TIMEOUT_ENV in said, "как поднять потолок — в самом отказе"
+
+
+def test_timeout_limit_comes_from_the_environment(monkeypatch):
+    """Долгая стадия — не сбой: потолок поднимается переменной окружения."""
+    monkeypatch.setenv(eng.TIMEOUT_ENV, "7200")
+    assert eng.timeout_seconds() == 7200
+
+    monkeypatch.setenv(eng.TIMEOUT_ENV, "чепуха")
+    assert eng.timeout_seconds() == eng.DEFAULT_TIMEOUT_SECONDS
+
+    monkeypatch.delenv(eng.TIMEOUT_ENV)
+    assert eng.timeout_seconds() == eng.DEFAULT_TIMEOUT_SECONDS
+
+
+def test_default_timeout_survives_a_long_stage():
+    """Сценарий получасовой серии и исследование с поиском идут дольше 15 минут."""
+    assert eng.DEFAULT_TIMEOUT_SECONDS >= 3600
