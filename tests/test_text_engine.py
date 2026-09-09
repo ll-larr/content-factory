@@ -243,6 +243,11 @@ def test_usage_limit_waits_and_runs_the_stage_again(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(eng.time, "sleep", lambda s: slept.append(s))
+    # Сколько ждать, считает `wait_for_limit` — у неё свои тесты. Здесь
+    # проверяется ЦИКЛ, и он не должен зависеть от того, который сейчас час:
+    # с настоящими часами «сброс в 15:00» посреди ночи вылезал за потолок
+    # ожидания, и тест падал по времени суток.
+    monkeypatch.setattr(eng, "wait_for_limit", lambda said, now=None: 42)
 
     answer = eng.ClaudeCodeEngine().complete("система", "задание")
 
