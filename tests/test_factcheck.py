@@ -265,15 +265,19 @@ def test_verdict_task_tells_agent_to_search_itself_when_no_excerpts():
     assert "ищи сам" in task
 
 
-def test_claims_over_the_cap_go_marked_unsearched():
-    """Потолок режет расходы, а не список: непроверенное обязано быть названо."""
-    claims = [factcheck.Claim(text=f"утв {i}", query=f"q{i}") for i in range(3)]
-    search = FakeSearch()
-    factcheck.gather(claims, search, max_searches=2, log=lambda *_: None)
+def test_every_claim_is_searched_without_a_cap():
+    """Потолка запросов нет (решение 2026-09-09).
 
-    assert search.queries == ["q0", "q1"]
-    assert claims[2].sources is None
-    assert "НЕ проводился" in factcheck.verdict_task(claims, searched=True)
+    Он резал не расходы, а достоверность: серия падала в `failed` не потому,
+    что факт неверен, а потому, что утверждений оказалось много.
+    """
+    claims = [factcheck.Claim(text=f"утв {i}", query=f"q{i}") for i in range(50)]
+    search = FakeSearch()
+
+    factcheck.gather(claims, search, log=lambda *_: None)
+
+    assert search.queries == [f"q{i}" for i in range(50)]
+    assert all(c.sources for c in claims)
 
 
 # --- прогон целиком --------------------------------------------------------

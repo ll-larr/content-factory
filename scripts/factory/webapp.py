@@ -20,8 +20,8 @@ from pathlib import Path
 from factory import estimate, keys
 from factory.manifest import Manifest, ManifestError
 from factory.preprod import (FACT_CHECK_STAGE, STAGE_LABELS, artifact_state,
-                             effective_feedback, episode_ids, next_stage,
-                             project_artifacts, stage_problems)
+                             artifact_written, effective_feedback, episode_ids,
+                             next_stage, project_artifacts, stage_problems)
 from factory.project import (FORMAT_LABELS, LANGUAGES, ProjectError,
                              load_project)
 from factory.providers import get_provider
@@ -32,6 +32,22 @@ from factory.tasks import TaskBusyError
 # Статусы, в которых единица ждёт ЧЕЛОВЕКА, а не машину. Панель существует ради
 # них: всё остальное человеку смотреть незачем.
 AWAITING_REVIEW = "generated"
+
+# То же самое для текстов: написанный артефакт ждёт `approve`, а устаревший —
+# перечитывания и повторного одобрения. Разница с кадром только в том, чем его
+# принимают, поэтому и место у них одно.
+AWAITING_APPROVAL = ("draft", "stale_self", "stale_deps")
+
+# Режимы работы кнопки конвейера. Имя поля то же, что читают `factory.py approve`
+# и `generate_batch` (потолок трат при `full`): второе имя для той же вещи
+# означало бы, что панель и код спорят о том, кто сейчас за рулём.
+AUTONOMY_MODES = ("checkpoints", "full")
+
+# Что панель правит в брифе. Список ОДИН и живёт здесь: у сервера был свой, и
+# новая настройка молча пропадала по дороге — панель говорила «Сохранено»,
+# а в project.json не попадало ничего.
+SETTABLE_FIELDS = ("language", "visual_mode", "autonomy", "segment_seconds",
+                   "budget_usd")
 
 
 class WebappError(ValueError):
@@ -51,6 +67,7 @@ def _artifacts(project_dir: Path) -> list[dict]:
     """Текстовые артефакты с состоянием одобрения — тот же список, что у CLI."""
     return [{"path": path.relative_to(project_dir).as_posix(),
              "state": artifact_state(project_dir, path),
+             "written": artifact_written(path),
              "feedback": effective_feedback(path)}
             for path in project_artifacts(project_dir)]
 
@@ -88,6 +105,7 @@ def project_overview(project_dir: Path,
             # здесь. У жанра, который её не требует, ключа нет вовсе: пустой
             # блок на экране мультфильма означал бы работу, которой не будет.
             "fact_check": _fact_check_block(project_dir, ep, knowledge_dir),
+            "duration": _episode_duration(project_dir, project, ep, knowledge_dir),
             "awaiting": sum(1 for i in ep_items
                             if i["status"] == AWAITING_REVIEW),
             "final": sorted(
@@ -115,8 +133,21 @@ def project_overview(project_dir: Path,
             "visual_mode", genre_summary(project, knowledge_dir)["default_visual_mode"]),
         "visual_modes": genre_summary(project, knowledge_dir)["visual_modes"],
         "segment_seconds": project.segment_seconds,
+        # Сетка длительностей у выбранной видеомодели: свободный ввод обещал бы
+        # человеку число, которое гейт модели тут же отобьёт (D-3). Пустой
+        # список — сетка неизвестна, тогда панель принимает любое целое.
+        "segment_options": segment_options(project, knowledge_dir),
+        # Режим работы кнопки конвейера. `checkpoints` — шаг за шагом с
+        # подтверждением сметы, `full` — без остановок. Поле то же, что читает
+        # `generate_batch` (потолок трат), а не второе имя для той же вещи.
+        "autonomy": project.raw.get("autonomy", "checkpoints"),
         "models": project.models,
         "artifacts": _artifacts(project_dir),
+        # Тексты, написанные и ждущие ОДОБРЕНИЯ человека. Место у ожидания
+        # человека одно — раздел приёмки: кадр и сценарий там равны, разница
+        # только в том, чем их принимают.
+        "awaiting_text": [a for a in _artifacts(project_dir)
+                          if a["written"] and a["state"] in AWAITING_APPROVAL],
         "episodes": episodes,
         # Референсы персонажей живут вне эпизодов — показываем отдельно, иначе
         # человек не увидит того, что ждёт его приёмки прямо сейчас.
@@ -130,6 +161,58 @@ def project_overview(project_dir: Path,
         "budget": {"limit": float(budget) if budget is not None else None,
                    "spent": manifest.credits_total()},
     }
+
+
+def segment_options(project, knowledge_dir: Path | str = Path("knowledge")) -> list[int]:
+    """Длительности отрезка, которые держит выбранная видеомодель.
+
+    Спрашивается карточка модели под выбранного провайдера — та же сетка, по
+    которой отказывает `validate_video_model` на платной стадии. Пустой список
+    значит «сетка не объявлена»: тогда панель принимает любое целое, а последнее
+    слово всё равно остаётся за гейтом.
+    """
+    from factory.models import ModelError, find_card
+
+    try:
+        card = find_card(Path(knowledge_dir), project.video_model)
+    except (ModelError, ProjectError, OSError, ValueError):
+        return []
+    providers = card.get("providers") or {}
+    entry = providers.get(project.video_provider) or {}
+    allowed = entry.get("allowed_durations", card.get("allowed_durations"))
+    return sorted(int(v) for v in allowed) if allowed else []
+
+
+def _episode_duration(project_dir: Path, project, episode: str,
+                      knowledge_dir: Path | str) -> dict:
+    """Сколько будет длиться серия: намерение плана против цели брифа.
+
+    Точное число даёт только режим отрезков: там длительность задаём мы сами
+    (`segment_seconds` × число отрезков). В режиме кадров длительность кадра
+    равна его реплике, а реплики измеряет монтаж (`parseMedia`) — Python их не
+    открывает и открывать не начнёт. Поэтому там честный МИНИМУМ: кадр не может
+    висеть меньше `STILL_MIN_SECONDS`, и `exact: false` говорит панели, что
+    это нижняя граница, а не обещание.
+    """
+    from factory.montage import STILL_MIN_SECONDS
+    from factory.shots import ShotsError, load_shots, stills_mode
+
+    target = project.raw.get("episode_duration_sec")
+    duration = {"planned_sec": None, "exact": False,
+                "target_sec": int(target) if target else None}
+    path = project_dir / "episodes" / episode / "shots.json"
+    try:
+        shots = load_shots(path, project_dir, episode)
+    except (ShotsError, OSError, ValueError):
+        return duration
+
+    if stills_mode(shots):
+        duration["planned_sec"] = round(
+            len(shots["frames"]) * STILL_MIN_SECONDS)
+        return duration
+    duration["planned_sec"] = len(shots["segments"]) * project.segment_seconds
+    duration["exact"] = True
+    return duration
 
 
 def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
@@ -254,20 +337,27 @@ def review_action(project_dir: Path, item_id: str, action: str,
     return manifest.get(item_id)
 
 
-def approve_artifact(project_dir: Path, rel: str) -> dict:
+def approve_artifact(project_dir: Path, rel: str, *, auto: bool = False) -> dict:
     """Одобрить текстовый артефакт — тем же кодом, что и CLI.
 
     Скилл и панель обязаны ставить одно и то же состояние, поэтому здесь вызов
     `factory.py approve`, а не своя запись во frontmatter (правило спеки:
     `status: approved` ставит ТОЛЬКО approve).
+
+    `auto` — одобрение принял не человек, а автономный режим (спека §7). Флаг
+    доезжает до файла полем `approved_by: auto`: иначе по проекту, прошедшему
+    конвейер целиком, нельзя понять, смотрел ли его хоть кто-то живой.
     """
     import subprocess
     import sys
 
     script = Path(__file__).resolve().parents[1] / "factory.py"
+    cmd = [sys.executable, str(script), "approve",
+           "--project", str(project_dir), rel]
+    if auto:
+        cmd.append("--auto")
     out = subprocess.run(
-        [sys.executable, str(script), "approve", "--project", str(project_dir), rel],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if out.returncode != 0:
         raise WebappError((out.stdout + out.stderr).strip() or "approve не удался")
     return {"path": rel, "state": artifact_state(project_dir, project_dir / rel)}
@@ -428,6 +518,11 @@ def set_project_settings(project_dir: Path, changes: dict,
     """
     from factory.project import LANGUAGES
 
+    unknown = sorted(set(changes) - set(SETTABLE_FIELDS))
+    if unknown:
+        raise WebappError(
+            f"панель не настраивает {unknown}; известны: {list(SETTABLE_FIELDS)}")
+
     path = Path(project_dir) / "project.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -455,13 +550,98 @@ def set_project_settings(project_dir: Path, changes: dict,
                 f"(разрешены: {card['visual_modes']})")
         data["visual_mode"] = mode
 
+    if "autonomy" in changes:
+        mode = changes["autonomy"]
+        if mode not in AUTONOMY_MODES:
+            raise WebappError(
+                f"неизвестный режим {mode!r}; известны: {list(AUTONOMY_MODES)}")
+        # Автономный режим не спрашивает подтверждения перед каждой тратой,
+        # поэтому останавливает съёмку только потолок бюджета — тот самый, что
+        # проверяет `generate_batch` при `autonomy: full`. Без него включать
+        # режим нельзя: остановить конвейер будет некому.
+        if mode == "full" and data.get("budget_usd") is None:
+            raise WebappError(
+                "автономный режим тратит без подтверждения каждого шага, "
+                "поэтому требует budget_usd в project.json — иначе съёмку "
+                "нечем остановить")
+        data["autonomy"] = mode
+
+    if "segment_seconds" in changes:
+        data["segment_seconds"] = _checked_segment_seconds(
+            data, changes["segment_seconds"], knowledge_dir)
+
+    if "budget_usd" in changes:
+        limit = changes["budget_usd"]
+        if limit is None or limit == "":
+            # Снять потолок можно, но не под автономным режимом: там он
+            # единственное, что останавливает съёмку.
+            if data.get("autonomy") == "full":
+                raise WebappError(
+                    "потолок снимается только в ручном режиме: автономный "
+                    "тратит без подтверждений, и остановить его больше нечем")
+            data.pop("budget_usd", None)
+        else:
+            if isinstance(limit, bool) or not isinstance(limit, (int, float)):
+                raise WebappError(
+                    f"потолок бюджета — число долларов, получено {limit!r}")
+            if limit <= 0:
+                raise WebappError("потолок бюджета должен быть больше нуля")
+            data["budget_usd"] = float(limit)
+
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
     return {"language": data.get("language"),
             "visual_mode": data.get("visual_mode"),
+            "autonomy": data.get("autonomy", "checkpoints"),
+            "segment_seconds": data.get("segment_seconds"),
+            "budget_usd": data.get("budget_usd"),
             "warnings": _mode_warnings(Path(project_dir),
                                        changes.get("visual_mode"))}
+
+
+def _checked_segment_seconds(data: dict, value, knowledge_dir) -> int:
+    """Длительность отрезка, которую видеомодель проекта действительно держит.
+
+    Проверяется тем же `validate_video_model`, что стоит на платной стадии:
+    панель, записавшая недостижимое число, оставила бы карточку формально
+    открытой и недостижимой гейтом — ровно то, ради чего заведено само поле
+    (сетки моделей режимами `quality_mode` не исчерпываются).
+    """
+    from factory.models import ModelError, find_card, validate_video_model
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise WebappError(
+            f"длительность отрезка — целое число секунд, получено {value!r}")
+
+    probe = dict(data)
+    probe["segment_seconds"] = value
+    try:
+        project = _project_from_data(probe)
+        card = find_card(Path(knowledge_dir), project.video_model)
+    except (ModelError, ProjectError, OSError, ValueError) as e:
+        raise WebappError(str(e)) from None
+
+    problems = validate_video_model(card, value, project.video_provider)
+    if problems:
+        raise WebappError("; ".join(problems))
+    return value
+
+
+def _project_from_data(data: dict):
+    """Бриф как объект, не трогая файл на диске.
+
+    Нужен, чтобы проверить ещё не записанное значение теми же правилами, что
+    прочитают его потом. Пишем во временный файл, потому что `load_project` —
+    единственное место, где бриф превращается в объект, и второй разбор тех же
+    полей разошёлся бы с ним в первый же день.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "project.json"
+        probe.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return load_project(probe)
 
 
 def _mode_warnings(project_dir: Path, mode: str | None) -> list[str]:
@@ -553,6 +733,38 @@ def _positive_int(value, field: str, limit: int) -> int:
     if number < 1 or number > limit:
         raise WebappError(f"{field}: допустимо от 1 до {limit}, получено {number}")
     return number
+
+
+def delete_project(projects_root: Path | str, name: str, *,
+                   confirm: str = "") -> dict:
+    """Удалить проект целиком. Необратимо и потому требует точного имени.
+
+    Внутри лежат оплаченные генерации: кадры, отрезки, озвучка. Отменить это
+    нечем — манифест уходит вместе с ними, — поэтому подтверждение не «да», а
+    имя проекта, набранное человеком. Так уже потеряли пилот и дымовой прогон
+    (чистка 2026-09-06), и цена ошибки известна.
+
+    Путь проверяется дважды, как и везде, где строка из браузера становится
+    путём: `is_safe_name` (одно имя, без `..` и слэшей) и `inside` (после
+    разрешения символических ссылок каталог остался внутри `projects/`).
+    """
+    import shutil as _shutil
+
+    projects_root = Path(projects_root)
+    if not is_safe_name(name):
+        raise WebappError(f"негодное имя проекта: {name!r}")
+    project_dir = projects_root / name
+    if not (project_dir / "project.json").is_file():
+        raise WebappError(f"нет проекта {name!r}")
+    if not inside(projects_root, project_dir):
+        raise WebappError(f"каталог {name!r} лежит вне projects/")
+    if confirm != name:
+        raise WebappError(
+            "удаление необратимо: внутри оплаченные генерации. Чтобы "
+            f"подтвердить, введи имя проекта целиком — {name!r}")
+
+    _shutil.rmtree(project_dir)
+    return {"deleted": name}
 
 
 def create_project(projects_root: Path | str, data: dict,

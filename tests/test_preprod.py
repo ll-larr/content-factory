@@ -1009,3 +1009,35 @@ def test_audio_plan_stage_needs_a_shot_plan(tmp_path):
     blockers, _ = stage_problems(p, "audio_plan", "ep01")
 
     assert any("shots.json" in s for s in blockers)
+
+
+def test_written_script_waits_for_approval_instead_of_being_rewritten(tmp_path):
+    """Написанный сценарий ждёт человека, а не переписывания.
+
+    Резолвер смотрел только на «не одобрен» и отвечал `script` — то есть в
+    автономном режиме сценарий переписывался бы по кругу за токены, пока
+    человек не успел его одобрить.
+    """
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "готовый текст")
+
+    assert next_stage(p) is None
+
+
+def test_empty_script_is_still_work_for_the_machine(tmp_path):
+    """Пустой скаффолд — не «ждёт приёмки»: писать его ещё некому было."""
+    p = make_project(tmp_path, episodes=1)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "   ")
+
+    assert next_stage(p) == ("script", "ep01")
+
+
+def test_unapproved_script_does_not_freeze_the_next_episode(tmp_path):
+    """Ожидание человека по одной серии не морозит работу по следующей (D-7)."""
+    p = make_project(tmp_path, episodes=2)
+    _closed_story(p)
+    write(p / "episodes" / "ep01" / "script.md", "script", "готовый текст")
+
+    assert next_stage(p) == ("script", "ep02")

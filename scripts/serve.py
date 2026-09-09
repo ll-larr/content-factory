@@ -156,9 +156,12 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("reason"))
                 return self._json({"item": item})
             if url.path == "/api/approve":
+                # `auto` ставит автономный режим панели: по файлу должно быть
+                # видно, что чекпоинт не смотрел человек (спека §7).
                 return self._json(webapp.approve_artifact(
                     self._project_dir(payload.get("project", "")),
-                    payload.get("path", "")))
+                    payload.get("path", ""),
+                    auto=bool(payload.get("auto"))))
             if url.path == "/api/run":
                 try:
                     task = webapp.run_stage(
@@ -193,6 +196,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"task": task})
             if url.path == "/api/new":
                 return self._json(webapp.create_project(PROJECTS_ROOT, payload))
+            if url.path == "/api/delete":
+                # Удаление уносит оплаченные генерации, поэтому подтверждение —
+                # имя проекта целиком, и проверяет его сервер: диалог в
+                # браузере закрывается одним Enter'ом.
+                if RUNNER.is_running():
+                    return self._error(
+                        409, "идёт стадия — сначала дождись её или отмени")
+                return self._json(webapp.delete_project(
+                    PROJECTS_ROOT, payload.get("project", ""),
+                    confirm=payload.get("confirm", "")))
             if url.path == "/api/voices":
                 try:
                     task = webapp.run_voice_samples(
@@ -217,8 +230,11 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/settings":
                 return self._json(webapp.set_project_settings(
                     self._project_dir(payload.get("project", "")),
-                    {k: v for k, v in payload.items()
-                     if k in ("language", "visual_mode")}))
+                    # Что настраивается, знает webapp: второй список полей
+                    # в сервере уже однажды съел новую настройку молча —
+                    # панель показывала «Сохранено», а в бриф не попадало
+                    # ничего (найдено живой проверкой 2026-09-09).
+                    {k: v for k, v in payload.items() if k != "project"}))
             if url.path == "/api/keys":
                 return self._json({"key": webapp.set_key(
                     ROOT, payload.get("provider", ""), payload.get("value", ""))})

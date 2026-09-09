@@ -571,3 +571,180 @@ def test_no_warning_when_the_plan_already_matches_the_mode(root):
                                          {"visual_mode": "stills"}, KNOWLEDGE)
 
     assert result["warnings"] == []
+
+
+# --- автономный и ручной режим (2026-09-09) --------------------------------
+
+def test_overview_reports_autonomy_manual_by_default(root):
+    """Молчание брифа — РУЧНОЙ режим: деньги без спроса не тратятся."""
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+    assert data["autonomy"] == "checkpoints"
+
+
+def test_autonomy_full_requires_a_budget_ceiling(root):
+    """Автономный режим тратит без подтверждения каждого шага.
+
+    Потолок держит код (`generate_batch` при autonomy: full), поэтому без
+    `budget_usd` включать режим нельзя — иначе некому остановить съёмку.
+    """
+    _retype(root, budget_usd=None)
+    with pytest.raises(webapp.WebappError, match="budget_usd"):
+        webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
+
+
+def test_autonomy_switches_both_ways(root):
+    webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["autonomy"] == "full"
+
+    webapp.set_project_settings(root / "pilot", {"autonomy": "checkpoints"}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["autonomy"] == "checkpoints"
+
+
+def test_unknown_autonomy_is_refused(root):
+    with pytest.raises(webapp.WebappError):
+        webapp.set_project_settings(root / "pilot", {"autonomy": "как-нибудь"},
+                                    KNOWLEDGE)
+
+
+# --- длительность отрезка и серии ------------------------------------------
+
+def _gridded_video_model(root):
+    """Видеомодель с объявленной сеткой длительностей (seedance1_5: 4, 8, 12)."""
+    _retype(root, models={"image": {"model": "z_image_turbo",
+                                    "provider": "wavespeed"},
+                          "video": {"model": "seedance1_5",
+                                    "provider": "wavespeed"}},
+            segment_seconds=8)
+
+
+def test_overview_offers_the_durations_the_model_allows(root):
+    """Свободный ввод обещал бы длительность, которую гейт модели отобьёт."""
+    _gridded_video_model(root)
+
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+
+    assert data["segment_options"] == [4, 8, 12]
+    assert data["segment_seconds"] in data["segment_options"]
+
+
+def test_no_grid_means_no_options_not_a_made_up_list(root):
+    """У seedance 2.0 сетка не объявлена: выдуманный список врал бы человеку."""
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["segment_options"] == []
+
+
+def test_segment_seconds_is_written_and_validated(root):
+    _gridded_video_model(root)
+
+    webapp.set_project_settings(root / "pilot", {"segment_seconds": 4}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["segment_seconds"] == 4
+
+    # 7 секунд эта модель не снимает — отказ здесь, а не на платной стадии.
+    with pytest.raises(webapp.WebappError, match="7"):
+        webapp.set_project_settings(root / "pilot", {"segment_seconds": 7}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["segment_seconds"] == 4
+
+
+def test_segment_seconds_refuses_nonsense(root):
+    for bad in (0, -5, "десять", 2.5, True):
+        with pytest.raises(webapp.WebappError):
+            webapp.set_project_settings(root / "pilot", {"segment_seconds": bad},
+                                        KNOWLEDGE)
+
+
+def test_overview_tells_how_long_the_episode_will_be(root):
+    """Один отрезок по 5 с — эпизод на 5 с, при цели брифа в 60."""
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+    ep = data["episodes"][0]
+
+    assert ep["duration"]["planned_sec"] == 5
+    assert ep["duration"]["target_sec"] == 60
+    assert ep["duration"]["exact"] is True
+
+
+def test_stills_duration_is_a_minimum_not_a_promise(root):
+    """В режиме кадров длительность задаёт реплика, и её меряет монтаж."""
+    _retype(root, genre="educational", visual_mode="stills")
+    _drop_segments(root)
+
+    ep = webapp.project_overview(root / "pilot", KNOWLEDGE)["episodes"][0]
+
+    assert ep["duration"]["exact"] is False
+    assert ep["duration"]["planned_sec"] > 0
+
+
+# --- приёмка текстов -------------------------------------------------------
+
+def test_written_but_unapproved_text_waits_for_the_human(root):
+    """Тексты ждут человека так же, как кадры: место у них одно — приёмка."""
+    idea = root / "pilot" / "bible" / "idea.md"
+    idea.parent.mkdir(parents=True, exist_ok=True)
+    idea.write_text("---\nkind: idea\nstatus: draft\n---\nмаяк и ворона\n",
+                    encoding="utf-8")
+
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+
+    assert any(a["path"] == "bible/idea.md" for a in data["awaiting_text"])
+
+
+def test_empty_scaffold_is_not_waiting_for_anything(root):
+    """Пустой артефакт скаффолда никто не писал — приёмке он не подлежит."""
+    idea = root / "pilot" / "bible" / "idea.md"
+    idea.parent.mkdir(parents=True, exist_ok=True)
+    idea.write_text("---\nkind: idea\nstatus: draft\n---\n\n", encoding="utf-8")
+
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+
+    assert data["awaiting_text"] == []
+
+
+# --- удаление проекта ------------------------------------------------------
+
+def test_delete_project_removes_the_directory(root):
+    webapp.delete_project(root, "pilot", confirm="pilot")
+    assert webapp.list_projects(root) == []
+
+
+def test_delete_refuses_without_the_exact_name(root):
+    """Удаление уносит оплаченные генерации: подтверждение — точное имя."""
+    with pytest.raises(webapp.WebappError):
+        webapp.delete_project(root, "pilot", confirm="pilo")
+    assert webapp.list_projects(root) == ["pilot"]
+
+
+def test_delete_refuses_a_name_that_is_not_a_project(root):
+    with pytest.raises(webapp.WebappError):
+        webapp.delete_project(root, "../..", confirm="../..")
+    assert (root / "pilot").exists()
+
+
+def test_unknown_setting_is_refused_not_swallowed(root):
+    """Незнакомое поле — отказ, а не тишина.
+
+    У сервера был свой список настраиваемых полей, и новая настройка молча
+    терялась по дороге: панель говорила «Сохранено», в бриф не попадало ничего.
+    """
+    with pytest.raises(webapp.WebappError, match="настраивает"):
+        webapp.set_project_settings(root / "pilot", {"theme": "другая"}, KNOWLEDGE)
+
+
+def test_budget_ceiling_is_set_from_the_panel(root):
+    """Потолок — условие автономного режима, значит его должно быть где задать."""
+    webapp.set_project_settings(root / "pilot", {"budget_usd": 12.5}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["budget"]["limit"] == 12.5
+
+    for bad in (-1, 0, "много"):
+        with pytest.raises(webapp.WebappError):
+            webapp.set_project_settings(root / "pilot", {"budget_usd": bad},
+                                        KNOWLEDGE)
+
+
+def test_budget_cannot_be_removed_under_autonomous_mode(root):
+    """Снять потолок при автономном режиме — значит снять единственный тормоз."""
+    webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
+
+    with pytest.raises(webapp.WebappError, match="автономн"):
+        webapp.set_project_settings(root / "pilot", {"budget_usd": None}, KNOWLEDGE)
+
+    webapp.set_project_settings(root / "pilot", {"autonomy": "checkpoints"}, KNOWLEDGE)
+    webapp.set_project_settings(root / "pilot", {"budget_usd": None}, KNOWLEDGE)
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["budget"]["limit"] is None

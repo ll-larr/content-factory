@@ -36,12 +36,12 @@ from factory.text.engine import TextEngine, TextEngineError
 STAGE_ID = "factcheck"
 REPORT_NAME = "fact-check.md"
 
-# Потолок поисковых запросов на одну серию. При $0.016 за запрос это $0.64 —
-# на фоне съёмки шум, но защита от сценария, в котором проверяющий назовёт две
-# сотни утверждений. Утверждения сверх потолка НЕ выбрасываются: они уезжают
-# проверяющему помеченными как непроверенные, и он обязан вынести по ним «не
-# проверить» — то есть серия падает в `failed`, а не проходит молча.
-MAX_SEARCHES = 40
+# Потолка на число поисковых запросов НЕТ (решение пользователя 2026-09-09).
+# Был потолок в 40 запросов на серию; непроверенные сверх него уезжали
+# проверяющему помеченными, и он обязан был вынести по ним «не проверить» — то
+# есть длинная серия падала в `failed` не потому, что факт неверен, а потому,
+# что запросов оказалось много. Проверка стоит дешевле неверного утверждения:
+# за него площадка штрафует или банит канал.
 
 _CLAIM_BLOCK = re.compile(
     r"===\s*CLAIM\s*===\s*(?P<body>.*?)\s*===\s*END CLAIM\s*===",
@@ -171,8 +171,7 @@ def parse_claims(answer: str) -> list[Claim]:
 
 # --- поиск ----------------------------------------------------------------
 
-def gather(claims: list[Claim], provider, *, max_searches: int = MAX_SEARCHES,
-           log=print) -> list[Claim]:
+def gather(claims: list[Claim], provider, *, log=print) -> list[Claim]:
     """Найти источники по каждому утверждению. Сорванный поиск — не молчание.
 
     Провал одного запроса не роняет проверку целиком: остальные утверждения
@@ -181,15 +180,12 @@ def gather(claims: list[Claim], provider, *, max_searches: int = MAX_SEARCHES,
     отсутствие подтверждений.
     """
     for i, claim in enumerate(claims):
-        if i >= max_searches:
-            break
         try:
             claim.sources = provider.search(claim.query)
         except ProviderError as e:
             claim.sources = []
             claim.error = str(e)
-        log(f"  [{i + 1}/{min(len(claims), max_searches)}] "
-            f"{claim.query} — "
+        log(f"  [{i + 1}/{len(claims)}] {claim.query} — "
             + (f"ошибка поиска: {claim.error}" if claim.error
                else f"{len(claim.sources)} источник(ов)"))
     return claims
@@ -221,9 +217,9 @@ def verdict_task(claims: list[Claim], *, searched: bool) -> str:
         parts.append(f"\nПоисковый запрос: `{claim.query}`")
         if claim.sources is None:
             parts.append(
-                "\nПоиск по этому утверждению НЕ проводился (превышен потолок "
-                f"в {MAX_SEARCHES} запросов на серию). Своими инструментами "
-                "проверить его, если умеешь; иначе вердикт — «не проверить».")
+                "\nПоиск по этому утверждению НЕ проводился. Своими "
+                "инструментами проверить его, если умеешь; иначе вердикт — "
+                "«не проверить».")
         elif claim.error:
             parts.append(f"\nПоиск сорвался: {claim.error}")
         elif not claim.sources:
@@ -453,9 +449,6 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     if search is not None and claims:
         log(f"поиск через {search.name}")
         gather(claims, search, log=log)
-        if len(claims) > MAX_SEARCHES:
-            log(f"утверждений больше потолка ({MAX_SEARCHES}): остальные уйдут "
-                "проверяющему непроверенными")
 
     # --- проход 2
     log("проход 2: вердикт")

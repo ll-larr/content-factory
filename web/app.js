@@ -192,6 +192,11 @@ function renderPipe() {
     ? `<b>${esc(d.next.stage)}</b> ${esc(d.next.episode || "")} — ${esc(d.next.label)}`
     : "нечего делать: всё закрыто или ждёт приёмки";
 
+  // Автономный режим ведёт конвейер сам, ручной — по шагу за нажатие. Режим
+  // живёт в брифе (`autonomy`), потому что его же читает код, держащий потолок
+  // трат: панель не заводит для этого второго имени.
+  const auto = d.autonomy === "full";
+
   // В шапке формат, а не легаси-type: у познавательного сериала type всё ещё
   // animated_series, и показывать это человеку значит врать о жанре, который
   // тут же назван отдельной строкой.
@@ -201,18 +206,22 @@ function renderPipe() {
       <h3>${esc(d.theme)}</h3>
       <p>Следующий шаг: ${nextText}</p>
       <p class="muted sub-line">
+        ${durationLine(ep)} ·
         отрезок ${esc(d.segment_seconds)} с ·
         кадр ${esc(d.models.image?.model || d.models.image)} ·
         видео ${esc(d.models.video?.model || d.models.video)}</p>
     </div>
     <div class="go">
-      ${d.next
+      ${d.next || (auto && (d.awaiting_text || []).length)
         ? `<button class="btn primary" id="run-pipeline"
-             title="${esc(d.next.kind === "paid"
-               ? "платная стадия — сначала смета"
-               : "текстовая стадия, провайдерам видео не платит")}"
-             ${d.next.kind === "unknown" ? "disabled" : ""}
-             >Запустить конвейер · ${esc(d.next.stage)}</button>`
+             title="${esc(auto
+               ? "идёт по шагам сам, пока не упрётся в человека или в потолок бюджета"
+               : d.next?.kind === "paid"
+                 ? "платная стадия — сначала смета"
+                 : "текстовая стадия, провайдерам видео не платит")}"
+             ${d.next?.kind === "unknown" ? "disabled" : ""}
+             >${auto ? "Запустить конвейер" : "Следующий шаг"}${
+               d.next ? " · " + esc(d.next.stage) : " · одобрить и дальше"}</button>`
         : `<span class="muted">Конвейер прошёл: делать нечего или всё ждёт приёмки</span>`}
       <button class="btn ghost" id="estimate-btn">Смета эпизода</button>
     </div>
@@ -245,6 +254,46 @@ function renderPipe() {
         ? "отрезки не снимаются: кадр висит столько, сколько говорит его реплика"
         : "снимаются отрезки — это дороже кадров примерно в десять раз"}</span>
     </div>
+
+    <div class="setting">
+      <span class="eyebrow">Кто ведёт конвейер</span>
+      <div class="chip-ep">
+        <button data-autonomy="checkpoints" aria-pressed="${!auto}">Вручную</button>
+        <button data-autonomy="full" aria-pressed="${auto}">Автономно</button>
+      </div>
+      <span class="hint-inline muted">${auto
+        ? "шаги идут подряд без подтверждений; останавливает потолок бюджета, отказ стадии или ожидание человека"
+        : "по шагу за нажатие: перед платной стадией показывается смета"}</span>
+    </div>
+
+    <label class="setting">
+      <span class="eyebrow">Длительность отрезка</span>
+      ${d.segment_options.length
+        ? `<select class="field" id="segment-seconds">${d.segment_options.map((v) =>
+            `<option value="${v}"${v === d.segment_seconds ? " selected" : ""}
+              >${v} с</option>`).join("")}</select>`
+        : `<input class="field" id="segment-seconds" type="number" min="1" step="1"
+             value="${esc(d.segment_seconds)}">`}
+      <span class="hint-inline muted">${d.segment_options.length
+        ? "сетка объявлена карточкой видеомодели — другое число она не снимет"
+        : "сетка у этой модели не объявлена; последнее слово за гейтом модели"}</span>
+    </label>
+
+    <label class="setting">
+      <span class="eyebrow">Потолок бюджета, $</span>
+      <input class="field" id="budget-limit" type="number" min="0" step="1"
+        placeholder="нет" value="${d.budget.limit === null ? "" : esc(d.budget.limit)}">
+      <span class="hint-inline muted">${auto
+        ? "в автономном режиме это единственный тормоз: снять его можно только вручную"
+        : "потрачено " + money(d.budget.spent) + "; автономный режим без потолка не включится"}</span>
+    </label>
+
+    <div class="setting">
+      <span class="eyebrow">Проект</span>
+      <button class="btn sm danger ghost" id="delete-project">Удалить проект</button>
+      <span class="hint-inline muted">удаляет всё дерево вместе с оплаченными
+        генерациями; спросит имя целиком</span>
+    </div>
   </div>`;
 
   const stages = `<h2 class="sec">Запустить стадию
@@ -255,9 +304,24 @@ function renderPipe() {
 
   const taskBox = `<div id="task-box"></div>`;
 
-  const review = waiting.length
-    ? `<div class="cards">${waiting.map(cardHtml).join("")}</div>`
-    : `<div class="empty">На приёмке ничего нет.</div>`;
+  // Тексты ждут человека так же, как кадры: разница только в том, чем их
+  // принимают — кадр кнопкой ревью, сценарий одобрением. Держать их в разных
+  // концах экрана значит прятать половину очереди.
+  const texts = d.awaiting_text || [];
+  const textRows = texts.length
+    ? `<div class="tbl-wrap"><table>
+        <thead><tr><th>артефакт</th><th>состояние</th><th></th></tr></thead>
+        <tbody>${texts.map((a) => `<tr>
+          <td class="mono"><button class="linkish artifact"
+            data-artifact="${esc(a.path)}" title="открыть">${esc(a.path)}</button></td>
+          <td><span class="badge s-${esc(a.state.split("_")[0])}">${esc(a.state)}</span></td>
+          <td><button class="btn sm" data-approve="${esc(a.path)}">Одобрить</button></td>
+        </tr>`).join("")}</tbody></table></div>`
+    : "";
+
+  const review = (waiting.length ? `<div class="cards">${waiting.map(cardHtml).join("")}</div>` : "")
+    + textRows
+    + (waiting.length || texts.length ? "" : `<div class="empty">На приёмке ничего нет.</div>`);
 
   const arts = `<div class="tbl-wrap"><table>
     <thead><tr><th>артефакт</th><th>состояние</th><th>правки</th><th></th></tr></thead>
@@ -279,15 +343,48 @@ function renderPipe() {
           <div class="meta"><span class="id">${esc(f)}</span></div></div>`).join("")}</div>`
     : "";
 
+  const queue = waiting.length + texts.length;
   $("#tab-pipe").innerHTML = head + stages + taskBox + factCheckBlock(ep) +
-    `<h2 class="sec">Ждёт приёмки <span class="hint">${waiting.length
-      ? "клик по кадру открывает крупно" : "пусто"}</span></h2>` + review +
+    `<h2 class="sec">Ждёт приёмки <span class="hint">${queue
+      ? "кадры открываются крупно, тексты — по ссылке" : "пусто"}</span></h2>` + review +
     `<h2 class="sec">Тексты <span class="hint">status ставит только approve</span></h2>` + arts +
     finals;
 
   const tab = $('.tab[data-tab="pipe"]');
-  tab.innerHTML = "Конвейер" + (waiting.length ? `<span class="cnt">${waiting.length}</span>` : "");
+  tab.innerHTML = "Конвейер" + (queue ? `<span class="cnt">${queue}</span>` : "");
   renderTask();
+  fitComposer();
+}
+
+/* Плановая длительность серии. Точное число даёт только режим отрезков: там
+   длительность задаём мы. В режиме кадров её задаёт реплика, а меряет её
+   монтаж — поэтому «не меньше», а не выдуманное точное число. */
+function durationLine(ep) {
+  const d = ep && ep.duration;
+  if (!d || d.planned_sec === null || d.planned_sec === undefined) {
+    return "длительность: нет плана съёмки";
+  }
+  const target = d.target_sec ? ` (цель ${clock(d.target_sec)})` : "";
+  return `${d.exact ? "" : "не меньше "}${clock(d.planned_sec)}${target}`;
+}
+
+function clock(seconds) {
+  const s = Math.round(Number(seconds) || 0);
+  if (s < 60) return `${s} с`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  return rest ? `${m} мин ${rest} с` : `${m} мин`;
+}
+
+/* Композер прибит к низу экрана, поэтому нижний отступ страницы обязан быть
+   равен его высоте: фиксированное число (было 150px) закрывало собой конец
+   раздела «Тексты», как только у композера переносилась строка кнопок.
+   Величина ставится через CSSOM: style-атрибуты запрещены CSP. */
+function fitComposer() {
+  const inner = $(".composer .inner");
+  if (!inner) return;
+  document.documentElement.style.setProperty(
+    "--composer-h", `${Math.ceil(inner.getBoundingClientRect().height)}px`);
 }
 
 // Блок проверки фактов: только там, где жанр её требует, — ключа у остальных
@@ -305,13 +402,13 @@ function factCheckBlock(ep) {
         fc.checked_at ? " · " + esc(fc.checked_at.slice(0, 16).replace("T", " ")) : ""}</span>`
     : "";
 
+  // Источники СЧИТАЮТСЯ, но не перечисляются: человеку у пульта важен вердикт,
+  // а не то, чем его получили. Перечень занимал пол-экрана после каждой
+  // проверки; сами ссылки никуда не делись — они в отчёте, который открывается
+  // кнопкой рядом.
   const sources = fc.sources.length
-    ? `<div class="fc-src"><b>Источники (${fc.sources.length})</b>
-        <ul>${fc.sources.map((u) =>
-          // Ссылки пишет проверяющий, то есть модель. Открываем в новой вкладке
-          // без доступа к нашей: панель тратит деньги и видит все проекты.
-          `<li><a href="${esc(u)}" target="_blank" rel="noopener noreferrer"
-            >${esc(u)}</a></li>`).join("")}</ul></div>`
+    ? `<span class="muted">· ${fc.sources.length} ${plural(fc.sources.length,
+        "источник", "источника", "источников")}</span>`
     : "";
 
   // Блокеры приходят от того же гейта, которым отказывает запуск. Пока они
@@ -324,13 +421,23 @@ function factCheckBlock(ep) {
   return `<h2 class="sec">Проверка фактов
       <span class="hint">без неё сценарий не одобрится</span></h2>
     <div class="fc">
-      <div class="fc-head">${state_}${meta}
-        ${fc.exists ? `<button class="linkish" id="fc-report">показать отчёт</button>` : ""}
+      <div class="fc-head">${state_}${meta}${sources}
+        ${fc.exists ? `<button class="linkish" id="fc-report">отчёт</button>` : ""}
         ${fc.passed || blocked ? "" : `<button class="btn sm ghost" id="fc-run"
           >${fc.exists ? "Проверить заново" : "Проверить факты"}</button>`}</div>
       ${fc.passed ? "" : `<p class="note">${esc(why)}</p>`}
-      ${sources}
     </div>`;
+}
+
+/* Русское склонение по числу: «1 источник», «2 источника», «5 источников».
+   Без него счётчик читается как машинный вывод, а панель — продукт. */
+function plural(n, one, few, many) {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = n % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }
 
 // Артефакт открывается той же ручкой, что отдаёт кадры и готовые серии:
@@ -421,10 +528,62 @@ async function pollTask() {
         ? `Стадия ${task.stage} завершена`
         : `Стадия ${task.stage}: ${task.status}, код ${task.exit_code}`,
         task.status !== "done");
+      if (task.status === "done") await continuePipeline(task);
     }
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+/* Одобрить всё, что ждёт человека, — только в автономном режиме и только
+   пометив, что смотрел не человек. Возвращает false, если одобрить что-то не
+   вышло: тогда конвейер останавливается, а причина уходит в тост. Отказ здесь
+   штатен — например, факты серии ещё не проверены. */
+async function autoApprove() {
+  const waiting = state.data?.awaiting_text || [];
+  if (!waiting.length) return true;
+  for (const art of waiting) {
+    try {
+      await post("/api/approve",
+                 { project: state.project, path: art.path, auto: true });
+      toast(`Одобрено автономно: ${art.path}`);
+    } catch (e) {
+      toast(`Конвейер остановлен на ${art.path}: ${e.message}`, true);
+      return false;
+    }
+  }
+  await loadProject();
+  return true;
+}
+
+/* Автономный режим: следующий шаг запускается сам, без подтверждения сметы.
+   Останавливаемся на трёх вещах — делать нечего, стадия отказала (сюда мы уже
+   не попадём: статус не done), и «резолвер просит то же самое». Последнее
+   означает ожидание ЧЕЛОВЕКА: например, сценарий написан, но не одобрен, и
+   повтор стадии переписывал бы его по кругу за деньги и токены. */
+async function continuePipeline(finished) {
+  if (state.data?.autonomy !== "full") return;
+  // Написанный артефакт ждёт человека, и резолвер честно молчит, пока его не
+  // одобрили. В автономном режиме одобряет сам режим — с пометкой
+  // `approved_by: auto`, чтобы по файлу было видно, что живой человек его не
+  // читал. Гейты при этом никуда не деваются: непроверенный сценарий
+  // познавательного жанра approve всё равно отобьёт.
+  if (!(await autoApprove())) return;
+  const next = state.data?.next;
+  if (!next) { toast("Конвейер: делать больше нечего"); return; }
+  if (next.kind === "unknown") {
+    toast(`Конвейер остановлен: панель не умеет запускать ${next.stage}`, true);
+    return;
+  }
+  const step = `${next.run || next.stage}/${next.episode || ""}`;
+  if (step === `${finished.stage}/${finished.episode || ""}`) {
+    toast(`Конвейер остановлен: ${next.stage} просит того же — нужен человек `
+      + "(одобрить артефакт или принять генерацию)", true);
+    return;
+  }
+  if (next.episode) state.episode = next.episode;
+  if (next.kind === "paid") await startStage(next.run || next.stage);
+  else await runTextStage(next.run || next.stage, "", next.episode);
 }
 
 async function runStage(stage) {
@@ -1121,6 +1280,12 @@ document.addEventListener("click", async (e) => {
   const mode = e.target.closest("[data-mode]");
   if (mode) { await saveSettings({ visual_mode: mode.dataset.mode }); return; }
 
+  const autonomy = e.target.closest("[data-autonomy]");
+  if (autonomy) { await saveSettings({ autonomy: autonomy.dataset.autonomy }); return; }
+
+  if (e.target.closest("#delete-project")) { askDeleteProject(); return; }
+  if (e.target.closest("#dp-confirm")) { await deleteProject(); return; }
+
   const stage = e.target.closest("[data-stage]");
   if (stage) { await runStage(stage.dataset.stage); return; }
 
@@ -1139,9 +1304,18 @@ document.addEventListener("click", async (e) => {
   // проекте он и есть первая фаза, а какая именно — решает жанр. Панель не
   // выбирает стадию сама, иначе у конвейера появился бы второй порядок.
   if (e.target.closest("#run-pipeline")) {
+    // Автономный режим не спрашивает сметы перед каждым шагом: человек уже
+    // выбрал его тумблером, а тратами там правит потолок бюджета. В ручном
+    // режиме смета показывается, как и раньше.
+    const auto = state.data?.autonomy === "full";
+    // Первый шаг автономного прогона может упираться в неодобренный артефакт:
+    // резолвер молчит, пока его ждут. Одобряем сами — тем же способом, что и
+    // между шагами, — и только потом смотрим, что дальше.
+    if (auto && !(await autoApprove())) return;
     const next = state.data?.next;
-    if (!next) return;
-    if (next.kind === "paid") await runStage(next.run || next.stage);
+    if (!next) { toast("Делать нечего: всё закрыто или ждёт приёмки"); return; }
+    if (next.kind === "paid" && auto) await startStage(next.run || next.stage);
+    else if (next.kind === "paid") await runStage(next.run || next.stage);
     else if (next.kind === "text") {
       if (next.episode) state.episode = next.episode;
       await runTextStage(next.run || next.stage, "", next.episode);
@@ -1174,6 +1348,41 @@ document.addEventListener("click", async (e) => {
     } catch (err) { toast(err.message, true); }
   }
 });
+
+/* Удаление проекта. Подтверждение — имя целиком, а не «да»: внутри лежат
+   оплаченные генерации, и отменить это нечем. Проверяет имя СЕРВЕР; диалог
+   только не даёт нажать кнопку случайно. */
+function askDeleteProject() {
+  const name = state.project;
+  if (!name) return;
+  openDialog(`<h3>Удалить проект «${esc(name)}»?</h3>
+    <p class="lead">Удаляется всё дерево: бриф, библия, сценарии, манифест и
+      скачанные кадры, отрезки и озвучка. Оплаченные генерации исчезнут вместе
+      с ними, вернуть их нельзя.</p>
+    <div class="fld"><span>Введи имя проекта целиком</span>
+      <input id="dp-name" type="text" autocomplete="off" placeholder="${esc(name)}"></div>
+    <div class="actions">
+      <button class="btn ghost" data-close>Отмена</button><span class="spacer"></span>
+      <button class="btn danger" id="dp-confirm">Удалить навсегда</button>
+    </div>`);
+  const field = $("#dp-name");
+  if (field) field.focus();
+}
+
+async function deleteProject() {
+  const name = state.project;
+  const typed = ($("#dp-name") || {}).value || "";
+  try {
+    await post("/api/delete", { project: name, confirm: typed.trim() });
+    closeDialog();
+    state.project = null;
+    state.episode = null;
+    state.data = null;
+    await loadProjects();
+    if (state.project) await loadProject();
+    toast(`Проект ${name} удалён`);
+  } catch (e) { toast(e.message, true); }
+}
 
 async function saveSettings(changes) {
   try {
@@ -1219,6 +1428,18 @@ async function showEstimate() {
 
 document.addEventListener("change", async (e) => {
   if (e.target.id === "language") await saveSettings({ language: e.target.value });
+  if (e.target.id === "budget-limit") {
+    // Пустое поле — снять потолок; сервер откажет, если режим автономный.
+    const raw = e.target.value.trim();
+    await saveSettings({ budget_usd: raw === "" ? null : Number(raw) });
+  }
+  if (e.target.id === "segment-seconds") {
+    // Число уходит числом: сервер проверит его сеткой видеомодели — той же,
+    // которой отказывает платная стадия.
+    const seconds = Number.parseInt(e.target.value, 10);
+    if (!Number.isFinite(seconds)) { toast("Длительность — целое число секунд", true); return; }
+    await saveSettings({ segment_seconds: seconds });
+  }
   if (e.target.id === "text-model") state.model = e.target.value;
   if (e.target.id === "voice-lang") { voiceLang = e.target.value; await renderVoices(); }
   const roleSelect = e.target.closest("[data-role]");
@@ -1263,8 +1484,18 @@ $("#theme").addEventListener("click", () => {
   document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
 });
 
+/* Композер растёт и сжимается сам: кнопки стадий переносятся по ширине окна,
+   а строка контекста — по числу движков. Поэтому высоту меряем не один раз, а
+   при каждом изменении: иначе нижний край страницы снова уедет под него. */
+if (typeof ResizeObserver === "function") {
+  const inner = $(".composer .inner");
+  if (inner) new ResizeObserver(fitComposer).observe(inner);
+}
+window.addEventListener("resize", fitComposer);
+
 /* ── Старт ─────────────────────────────────────────── */
 (async () => {
+  fitComposer();
   await loadProjects();
   await loadEnvironment();
   await loadProject();

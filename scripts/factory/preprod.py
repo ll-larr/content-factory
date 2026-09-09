@@ -223,6 +223,20 @@ STAGE_REQUIRES: dict[str, list[str]] = {
 }
 
 
+def artifact_written(path: Path) -> bool:
+    """Написан ли артефакт по существу, а не только создан скаффолдом.
+
+    Пустой `script.md` тоже `draft`, но одобрять в нём нечего — и ждать
+    человека он не должен. Тот же вопрос задаёт `factory.py approve`, отказывая
+    «тело пустое — нечего одобрять»; спрашивают его двое (резолвер и панель),
+    поэтому ответ здесь один.
+    """
+    try:
+        return bool(load_artifact(Path(path)).body.strip())
+    except (ArtifactError, OSError):
+        return False
+
+
 def craft_notes_problem(project_dir: Path) -> str | None:
     """Написаны ли правила ремесла проекта; None — написаны.
 
@@ -753,16 +767,25 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
     # отложенную, а не «всё закрыто».
     deferred: list[tuple[str, str | None]] = []
     for ep in episode_ids(project_dir):
-        script_state = artifact_state(
-            project_dir, project_dir / f"episodes/{ep}/script.md")
+        script = project_dir / f"episodes/{ep}/script.md"
+        script_state = artifact_state(project_dir, script)
         if script_state != "approved":
+            written = (script_state not in ("missing", "broken")
+                       and artifact_written(script))
             # Написанный, но непроверенный сценарий — работа для ПРОВЕРКИ, а не
             # повод переписать его заново. Возвращать здесь "script" значило бы
             # отправить автора сочинять поверх того, что уже сочинено, и
             # проверка не позвалась бы никогда.
-            if script_state not in ("missing", "broken") \
-                    and fact_check_problem(project_dir, ep):
+            if written and fact_check_problem(project_dir, ep):
                 return (FACT_CHECK_STAGE, ep)
+            # Написан, факты сверены — дальше ждут ЧЕЛОВЕКА с `approve`, и
+            # машине тут делать нечего. Возвращать "script" значило бы
+            # переписывать по кругу за токены то, что человек не успел
+            # прочитать (найдено живым прогоном 2026-09-09 на автономном
+            # режиме). Серия пропускается, а не откладывается: запускать в ней
+            # нечего, и следующая серия ждать не должна (D-7).
+            if script_state == "draft" and written:
+                continue
             return ("script", ep)
         if (genre_stage_problem(project_dir, "characters") is None
                 and (_cast_problems(project_dir, ep)

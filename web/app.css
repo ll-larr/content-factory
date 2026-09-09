@@ -287,7 +287,12 @@ tfoot td { border-top:1px solid var(--line); font-weight:700; }
 .engine-pick { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 .engine-pick select { background:var(--panel-2); border:1px solid var(--line);
   border-radius:6px; padding:4px 8px; font-size:11.5px; max-width:260px; }
-.page { padding-bottom:150px; }
+/* Композер прибит к низу, поэтому страница обязана заканчиваться ВЫШЕ него.
+   Было фиксированные 150px — стоило кнопкам стадий перенестись на вторую
+   строку, и композер наезжал на конец списка. Высоту меряет JS
+   (`fitComposer`) и кладёт в переменную; 150px остаются запасным значением
+   на первый кадр, пока измерения ещё нет. */
+.page { padding-bottom:calc(var(--composer-h, 150px) + 28px); }
 
 /* ── Мастер нового проекта ─────────────────────────── */
 .proj.new { color:var(--text-3); font-size:12px; margin-top:4px;
@@ -383,12 +388,9 @@ h2.sec span { font-size:11px; color:var(--text-3); text-transform:none;
 .fc-head .mono { font-size:11.5px; font-family:var(--f-mono); color:var(--text-3); }
 .fc-ok { font-size:12.5px; font-weight:600; color:var(--brass); }
 .fc-no { font-size:12.5px; font-weight:600; color:var(--err, #E06C5A); }
-.fc-src { margin-top:10px; font-size:12px; }
-.fc-src b { font-size:11px; letter-spacing:.06em; text-transform:uppercase;
-  color:var(--text-3); font-weight:600; }
-.fc-src ul { margin:6px 0 0; padding-left:18px; display:grid; gap:3px; }
-.fc-src a { color:var(--text-2); word-break:break-all; }
-.fc-src a:hover { color:var(--brass); }
+/* Перечня источников тут больше нет (решение 2026-09-09): у пульта важен
+   вердикт, а не то, чем он получен. Ссылки остались в отчёте — он рядом. */
+.fc-head .muted { font-size:11.5px; }
 .fc-report { white-space:pre-wrap; word-break:break-word; font-size:12px;
   line-height:1.5; max-height:60vh; overflow-y:auto; background:var(--panel-2);
   border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin:0; }
