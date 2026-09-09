@@ -268,10 +268,9 @@ function renderPipe() {
     </div>
 
     <label class="setting">
-      <span class="eyebrow">Длительность серии, мин</span>
-      <input class="field" id="episode-minutes" type="number" min="1" step="1"
-        value="${ep && ep.duration.target_sec
-          ? Math.round(ep.duration.target_sec / 60) : ""}">
+      <span class="eyebrow">Длительность серии, с</span>
+      <input class="field" id="episode-seconds" type="number" min="1" step="1"
+        value="${ep && ep.duration.target_sec ? esc(ep.duration.target_sec) : ""}">
       <span class="hint-inline muted">цель из брифа; из неё считается прогноз
         стоимости до раскадровки</span>
     </label>
@@ -370,19 +369,13 @@ function renderPipe() {
    монтаж — поэтому «не меньше», а не выдуманное точное число. */
 function durationLine(ep) {
   const d = ep && ep.duration;
+  const target = d && d.target_sec ? ` (цель ${Math.round(d.target_sec)} с)` : "";
   if (!d || d.planned_sec === null || d.planned_sec === undefined) {
-    return "длительность: нет плана съёмки";
+    return `длительность: нет плана съёмки${target}`;
   }
-  const target = d.target_sec ? ` (цель ${clock(d.target_sec)})` : "";
-  return `${d.exact ? "" : "не меньше "}${clock(d.planned_sec)}${target}`;
-}
-
-function clock(seconds) {
-  const s = Math.round(Number(seconds) || 0);
-  if (s < 60) return `${s} с`;
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  return rest ? `${m} мин ${rest} с` : `${m} мин`;
+  // Секунды везде: в брифе, в поле настройки и здесь. Перевод в минуты по
+  // дороге заставлял бы человека считать в уме, сверяя экран с файлом.
+  return `${d.exact ? "" : "не меньше "}${Math.round(d.planned_sec)} с${target}`;
 }
 
 /* Композер прибит к низу экрана, поэтому нижний отступ страницы обязан быть
@@ -1517,15 +1510,16 @@ async function showEstimate() {
 
 document.addEventListener("change", async (e) => {
   if (e.target.id === "language") await saveSettings({ language: e.target.value });
-  if (e.target.id === "episode-minutes") {
-    // Человек думает минутами, бриф хранит секунды. Перевод здесь — один, и
-    // сервер получает то же число, что записал бы мастер нового проекта.
-    const minutes = Number.parseInt(e.target.value, 10);
-    if (!Number.isFinite(minutes) || minutes < 1) {
-      toast("Длительность серии — целое число минут", true);
+  if (e.target.id === "episode-seconds") {
+    // Секунды и только секунды: бриф хранит их, прогноз считает по ним, и
+    // перевод в минутах по дороге означал бы, что человек вводит одно число, а
+    // в файле лежит другое.
+    const seconds = Number.parseInt(e.target.value, 10);
+    if (!Number.isFinite(seconds) || seconds < 1) {
+      toast("Длительность серии — целое число секунд", true);
       return;
     }
-    await saveSettings({ episode_duration_sec: minutes * 60 });
+    await saveSettings({ episode_duration_sec: seconds });
   }
   if (e.target.id === "budget-limit") {
     // Пустое поле — снять потолок; сервер откажет, если режим автономный.
