@@ -18,6 +18,7 @@ from pathlib import Path
 
 from factory.audio_plan import load_audio_plan
 from factory.manifest import ManifestError
+from factory.shots import stills_mode as shots_stills_mode
 
 # Принято ревью — то же множество, что было в assemble.py и mix_audio.py.
 ACCEPTED = {"done", "accepted_with_notes"}
@@ -276,13 +277,12 @@ def review_problems(manifest, episode: str, shots: dict,
     # трейсбек вместо гейта (найдено дымовым прогоном 2026-09-08). Режим
     # определяется по самому плану съёмки: второй источник правды о нём означал
     # бы два ответа на один вопрос.
-    segments = shots.get("segments") or []
-    if segments:
-        for seg in segments:
-            check(f"{episode}/segments/{seg['n']:03d}")
-    else:
+    if shots_stills_mode(shots):
         for frame in shots.get("frames") or []:
             check(f"{episode}/storyboard/{frame['n']:03d}")
+    else:
+        for seg in shots.get("segments") or []:
+            check(f"{episode}/segments/{seg['n']:03d}")
     for entry in plan["voice_lines"] + plan["music_cues"] + plan["sfx"]:
         check(f"{episode}/audio/{entry['id']}")
     # Фоли живёт в манифесте под своим префиксом: дорожка по видео — отдельная
@@ -436,8 +436,10 @@ def build_edit_list(project, project_dir: Path, episode: str, shots: dict,
 
     # В режиме кадров отрезков нет вовсе: эпизод собирается из принятых кадров
     # под озвучку. Требовать при этом файлы отрезков было бы требованием того,
-    # что сознательно не снимали.
-    stills_mode = getattr(project, "visual_mode", "video") == "stills"
+    # что сознательно не снимали. Режим спрашиваем у ПЛАНА (`shots.stills_mode`),
+    # как и приёмка: флаг проекта — вход стадии раскадровки, а не второй ответ
+    # на тот же вопрос.
+    stills_mode = shots_stills_mode(shots)
     if stills_mode:
         segments = []
         stills = [

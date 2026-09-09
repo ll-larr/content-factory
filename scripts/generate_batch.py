@@ -320,7 +320,8 @@ def main(argv=None) -> int:
     shots = None
     if args.stage in ("storyboard", "segments", *AUDIO_STAGES):
         try:
-            shots = load_shots(episode_dir / "shots.json", project_dir)
+            shots = load_shots(episode_dir / "shots.json", project_dir,
+                               args.episode)
         except ShotsError as e:
             # Непригодный план съёмки — ошибка контракта входных данных стадии,
             # значит код 2 и сообщение, а не трейсбек и не код 1 «техсбой»

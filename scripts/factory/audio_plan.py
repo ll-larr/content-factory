@@ -114,10 +114,11 @@ def _plan_units(shots: dict) -> tuple[set[int], str]:
     что здесь известно, а второй источник правды о режиме означал бы два ответа
     на один вопрос.
     """
-    segments = {s["n"] for s in shots.get("segments") or []}
-    if segments:
-        return segments, "segment"
-    return {f["n"] for f in shots.get("frames") or []}, "frame"
+    from factory.shots import stills_mode
+
+    if stills_mode(shots):
+        return {f["n"] for f in shots.get("frames") or []}, "frame"
+    return {s["n"] for s in shots["segments"]}, "segment"
 
 
 def load_audio_plan(path: Path, shots: dict) -> dict:

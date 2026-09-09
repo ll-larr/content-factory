@@ -93,6 +93,10 @@ def project(tmp_path):
                    "video": {"model": "vidu_q2_turbo"}},
     }, ensure_ascii=False), encoding="utf-8")
     (pdir / "episodes" / "ep01" / "script.md").write_text(SCRIPT, encoding="utf-8")
+    # Правила ремесла — выход этапа story: без них резолвер честно возвращает
+    # story, и до проверки фактов очередь не доходит.
+    (pdir / "bible" / "craft-notes.md").write_text(
+        "не объяснять шутки\n", encoding="utf-8")
     return pdir
 
 
@@ -619,3 +623,78 @@ def test_cli_refusal_still_names_the_command(project, capsys):
 
     out = capsys.readouterr().out
     assert "text_stage.py" in out and "--stage factcheck" in out
+
+
+def test_run_refuses_before_the_engine_when_there_is_no_script(project):
+    """Гейт стоит ВНУТРИ run: путей запуска два, и забыть его на одном нельзя."""
+    (project / "episodes" / "ep01" / "script.md").unlink()
+    # Пустой список ответов: позови эта ветка движок — тест упадёт на нём.
+    engine = FakeEngine([])
+
+    with pytest.raises(factcheck.FactCheckBlocked) as e:
+        factcheck.run(project, REPO, "ep01", engine=engine,
+                      search=FakeSearch(), log=lambda *_: None)
+
+    assert "сначала этап script" in str(e.value)
+    assert engine.calls == []
+
+
+def test_run_refuses_a_genre_that_does_not_check_facts(cartoon):
+    with pytest.raises(factcheck.FactCheckBlocked):
+        factcheck.run(cartoon, REPO, "ep01", engine=FakeEngine([]),
+                      search=FakeSearch(), log=lambda *_: None)
+
+
+def test_blocked_is_a_factcheck_error(project):
+    """Старые обработчики ловят FactCheckError — отказ гейта им не проскочит."""
+    assert issubclass(factcheck.FactCheckBlocked, factcheck.FactCheckError)
+
+
+def test_missing_verdict_error_quotes_the_answer(project):
+    """Чёрный ящик: без хвоста ответа не отличить сломанную модель от пустой серии."""
+    with pytest.raises(factcheck.FactCheckError) as e:
+        factcheck.parse_verdict("проверять нечего: сценария нет")
+
+    assert "проверять нечего: сценария нет" in str(e.value)
+
+
+def test_empty_answer_is_named_as_empty():
+    with pytest.raises(factcheck.FactCheckError) as e:
+        factcheck.parse_verdict("")
+    assert "ответ пуст" in str(e.value)
+
+
+# --- панель ----------------------------------------------------------------
+
+def test_panel_hides_the_button_when_there_is_nothing_to_check(project):
+    """Панель обязана молчать о работе, которую сервер тут же отобьёт."""
+    from factory import webapp
+
+    (project / "episodes" / "ep01" / "script.md").unlink()
+    block = webapp._fact_check_block(project, "ep01", KNOWLEDGE)
+
+    assert any("сначала этап script" in b for b in block["blockers"])
+
+
+def test_panel_offers_the_check_when_the_script_is_written(project, monkeypatch):
+    from factory import webapp
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-тест")
+    block = webapp._fact_check_block(project, "ep01", KNOWLEDGE)
+
+    assert block["blockers"] == []
+    assert block["passed"] is False
+
+
+def test_panel_run_refuses_without_a_script(project, monkeypatch):
+    from factory import webapp
+
+    (project / "episodes" / "ep01" / "script.md").unlink()
+    monkeypatch.setattr(webapp.text_engine, "pick_engine",
+                        lambda preferred=None: FakeEngine([]))
+
+    with pytest.raises(webapp.WebappError) as e:
+        webapp.run_text_stage(project, "factcheck", episode="ep01",
+                              repo_root=REPO)
+
+    assert "сначала этап script" in str(e.value)

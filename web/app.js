@@ -314,14 +314,21 @@ function factCheckBlock(ep) {
             >${esc(u)}</a></li>`).join("")}</ul></div>`
     : "";
 
+  // Блокеры приходят от того же гейта, которым отказывает запуск. Пока они
+  // есть, кнопки нет вовсе: нажатие всё равно кончится отказом сервера, а
+  // проверяющий, позванный на серию без сценария, честно откажется выносить
+  // вердикт — и это читается как поломка движка, а не как «сначала сценарий».
+  const blocked = (fc.blockers || []).length > 0;
+  const why = blocked ? fc.blockers.join("; ") : fc.problem;
+
   return `<h2 class="sec">Проверка фактов
       <span class="hint">без неё сценарий не одобрится</span></h2>
     <div class="fc">
       <div class="fc-head">${state_}${meta}
         ${fc.exists ? `<button class="linkish" id="fc-report">показать отчёт</button>` : ""}
-        ${fc.passed ? "" : `<button class="btn sm ghost" id="fc-run"
+        ${fc.passed || blocked ? "" : `<button class="btn sm ghost" id="fc-run"
           >${fc.exists ? "Проверить заново" : "Проверить факты"}</button>`}</div>
-      ${fc.passed ? "" : `<p class="note">${esc(fc.problem)}</p>`}
+      ${fc.passed ? "" : `<p class="note">${esc(why)}</p>`}
       ${sources}
     </div>`;
 }
@@ -607,7 +614,7 @@ function guessStage(text) {
     [/сценар/i, "script"],
     [/персонаж|герой|карточк/i, "characters"],
     [/раскадр|кадр/i, "storyboard"],
-    [/звук|озвуч|реплик/i, "audio"],
+    [/звук|озвуч|реплик/i, "audio_plan"],
   ];
   for (const [re, id] of map) {
     if (re.test(text) && (state.text?.stages || []).some((s) => s.id === id)) return id;
@@ -1134,10 +1141,10 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("#run-pipeline")) {
     const next = state.data?.next;
     if (!next) return;
-    if (next.kind === "paid") await runStage(next.stage);
+    if (next.kind === "paid") await runStage(next.run || next.stage);
     else if (next.kind === "text") {
       if (next.episode) state.episode = next.episode;
-      await runTextStage(next.stage, "", next.episode);
+      await runTextStage(next.run || next.stage, "", next.episode);
     } else toast(`панель не умеет запускать стадию ${next.stage}`, true);
     return;
   }
@@ -1170,9 +1177,13 @@ document.addEventListener("click", async (e) => {
 
 async function saveSettings(changes) {
   try {
-    await post("/api/settings", { project: state.project, ...changes });
+    const saved = await post("/api/settings", { project: state.project, ...changes });
     await loadProject();
     toast("Сохранено в project.json");
+    // Смена режима флагом не переписывает уже написанный план съёмки, а
+    // конвейер идёт по плану. Промолчать значит дать человеку решить, что
+    // отрезки сниматься не будут, — и всё равно списать за них деньги.
+    (saved.warnings || []).forEach((w) => toast(w, true));
   } catch (e) { toast(e.message, true); }
 }
 

@@ -161,7 +161,16 @@ def stale_reason(project_dir: Path, path: Path) -> str:
     return "зависимости в порядке"
 
 
-STAGES = ("research", "story", "script", "characters", "storyboard")
+STAGES = ("research", "story", "script", "characters", "storyboard",
+          "audio_plan")
+
+# Правила ремесла — четвёртый выход этапа story и единственный его выход, у
+# которого нет статуса: `craft-notes.md` не одобряют, его читают. Поэтому в
+# STAGE_REQUIRES он не выражается, а закрытость этапа считается отдельно:
+# файл есть и в нём что-то написано. Без этого story считался закрытым по трём
+# одобренным артефактам, а стадия молча не писала четвёртый — и весь конвейер
+# ехал без границ из брифа (живой прогон 2026-09-09).
+CRAFT_NOTES = "bible/craft-notes.md"
 
 # Проверка фактов стоит особняком от STAGES, и это не оплошность: её вход —
 # сценарий, который ещё НЕ одобрен и до неё одобрен быть не может. Через
@@ -175,9 +184,23 @@ FACT_CHECK_STAGE = "factcheck"
 PAID_STAGES = ("storyboard_generate", "segments", "audio", "foley", "lipsync",
                "render")
 
+# Имя стадии у резолвера и имя, которым её запускают, совпадают везде, кроме
+# кадров: резолверу нужно отличать текстовый этап `storyboard` (пишет
+# shots.json) от платной генерации кадров, а CLI знает вторую как
+# `--stage storyboard`. Перевод живёт ЗДЕСЬ и только здесь: панель отправляла
+# в запуск имя резолвера как есть и получала «неизвестная стадия», то есть
+# конвейер вставал на первом же платном шаге (найдено ревью 2026-09-09).
+_RUN_NAME = {"storyboard_generate": "storyboard"}
+
+
+def cli_stage(stage: str) -> str:
+    """Имя стадии, которым её запускают CLI и панель."""
+    return _RUN_NAME.get(stage, stage)
+
 # Человеческие имена стадий: машинное `storyboard_generate` в сообщении гейта
 # ничего не объясняет тому, кто спрашивает «почему нельзя».
 STAGE_LABELS = {
+    "audio_plan": "план звука",
     "storyboard_generate": "генерация кадров раскадровки",
     "segments": "генерация видеоотрезков",
     "audio": "озвучка, музыка и эффекты",
@@ -193,7 +216,35 @@ STAGE_REQUIRES: dict[str, list[str]] = {
     "script": ["bible/idea.md", "bible/season-arc.md"],
     "characters": ["episodes/{ep}/script.md"],
     "storyboard": ["episodes/{ep}/script.md", "bible/style-guide.md"],
+    # План звука пишется по одобренному сценарию: реплики берутся оттуда
+    # дословно. Раскадровка ему тоже нужна — но не одобрением, а файлом
+    # (shots.json без frontmatter), поэтому она проверяется отдельно.
+    "audio_plan": ["episodes/{ep}/script.md"],
 }
+
+
+def craft_notes_problem(project_dir: Path) -> str | None:
+    """Написаны ли правила ремесла проекта; None — написаны.
+
+    Пустое тело не считается написанным: скаффолд создаёт файлы заранее, и
+    «файл существует» означало бы, что этап сделан, ещё до того, как его вели.
+    """
+    path = Path(project_dir) / CRAFT_NOTES
+    if not path.exists():
+        return f"{CRAFT_NOTES}: не написан — правила ремесла читает каждая " \
+               "творческая стадия"
+    try:
+        body = load_artifact(path).body
+    except (ArtifactError, OSError):
+        body = ""
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    if not body.strip():
+        return f"{CRAFT_NOTES}: пуст — правила ремесла читает каждая " \
+               "творческая стадия"
+    return None
 
 _STATE_MESSAGE = {
     "missing": "не существует",
@@ -306,7 +357,8 @@ def _paid_stage_problems(project_dir: Path, stage: str,
     episode_dir = Path(project_dir) / "episodes" / episode
     if not (episode_dir / "shots.json").exists():
         return [f"нет {episode_dir / 'shots.json'} — сначала этап storyboard"]
-    if stage in ("audio", "foley", "lipsync")             and not (episode_dir / "audio.json").exists():
+    if (stage in ("audio", "foley", "lipsync")
+            and not (episode_dir / "audio.json").exists()):
         return [f"нет {episode_dir / 'audio.json'} — сначала /factory-audio"]
     pending = _paid_stage(project_dir, episode)
     if pending == stage:
@@ -362,6 +414,37 @@ def fact_check_problem(project_dir: Path, episode: str) -> str | None:
     return report_problem(project_dir, episode)
 
 
+def fact_check_input_problems(project_dir: Path,
+                              episode: str | None) -> list[str]:
+    """Чего не хватает, чтобы проверке было о чём выносить вердикт.
+
+    Отделено от гейта этапа, потому что спрашивают об этом ДВОЕ и с разных
+    сторон: гейт этапа складывает это с доступностью поиска и с работой самого
+    этапа, а `factcheck.run` — единственный вход обоих путей запуска — берёт
+    отсюда только вопрос «есть ли что проверять». Движок и поиск на том пути
+    уже выбраны, спрашивать о них второй раз нечего.
+
+    Разделение не заводит второго мнения: список тут один, и `stage_problems`
+    начинается ровно с него.
+    """
+    from factory.text.factcheck import genre_requires_check
+
+    if episode is None:
+        return [f"этап {FACT_CHECK_STAGE} требует --episode"]
+    if not genre_requires_check(project_dir):
+        return [f"этап {FACT_CHECK_STAGE!r} не существует у этого жанра: "
+                "проверка фактов объявляется карточкой жанра "
+                "(fact_check: required)"]
+
+    script = project_dir / "episodes" / episode / "script.md"
+    state = artifact_state(project_dir, script)
+    if state in ("missing", "broken"):
+        return [f"episodes/{episode}/script.md: "
+                f"{_state_message(project_dir, script, state)} — "
+                "проверять нечего, сначала этап script"]
+    return []
+
+
 def _fact_check_stage_problems(project_dir: Path,
                                episode: str | None) -> tuple[list[str], list[str]]:
     """Гейт самой проверки: (блокеры, работа этапа).
@@ -370,21 +453,11 @@ def _fact_check_stage_problems(project_dir: Path,
     жанр её не требует, искать нечем. Собственная работа — единственная строка
     от `fact_check_problem`: провести проверку и есть предмет этапа.
     """
-    from factory.text.factcheck import availability, genre_requires_check
+    from factory.text.factcheck import availability
 
-    if episode is None:
-        return [f"этап {FACT_CHECK_STAGE} требует --episode"], []
-    if not genre_requires_check(project_dir):
-        return ([f"этап {FACT_CHECK_STAGE!r} не существует у этого жанра: "
-                 "проверка фактов объявляется карточкой жанра "
-                 "(fact_check: required)"], [])
-
-    script = project_dir / "episodes" / episode / "script.md"
-    state = artifact_state(project_dir, script)
-    if state in ("missing", "broken"):
-        return ([f"episodes/{episode}/script.md: "
-                 f"{_state_message(project_dir, script, state)} — "
-                 "проверять нечего, сначала этап script"], [])
+    blockers = fact_check_input_problems(project_dir, episode)
+    if blockers:
+        return blockers, []
 
     ok, reason = availability()
     if not ok:
@@ -455,6 +528,24 @@ def stage_problems(project_dir: Path, stage: str,
         fact_problem = fact_check_problem(project_dir, episode)
         if fact_problem:
             (own_work if stage == "script" else blockers).append(fact_problem)
+
+    # Правила ремесла — работа САМОГО этапа story: он их и пишет. На вопрос
+    # «можно ли садиться за этап» ответ от этого не меняется (U-11), но
+    # незакрытый выход обязан быть назван, иначе он и дальше остаётся
+    # невидимым.
+    if stage == "story":
+        problem = craft_notes_problem(project_dir)
+        if problem:
+            own_work.append(problem)
+
+    # Раскадровка нужна плану звука файлом, а не одобрением: реплики
+    # привязываются к её единицам (отрезкам, а в режиме кадров — кадрам), и без
+    # неё валидатор плана не с чем сверять номера.
+    if stage == "audio_plan" and episode is not None:
+        shots = project_dir / "episodes" / episode / "shots.json"
+        if not shots.exists():
+            blockers.append(
+                f"нет episodes/{episode}/shots.json — сначала этап storyboard")
 
     for template in STAGE_REQUIRES[stage]:
         if "{ep}" in template and episode is None:
@@ -639,12 +730,18 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
     # раньше источников, — это выдумка, которую потом придётся переписывать.
     # У жанров без `requires_research` шаг остаётся вне резолвера: он там не
     # обязателен, и требовать его значило бы придумывать работу.
-    if research_required(project_dir)             and artifact_state(project_dir, project_dir / "research.md") != "approved":
+    if (research_required(project_dir)
+            and artifact_state(
+                project_dir, project_dir / "research.md") != "approved"):
         return ("research", None)
 
+    # Четвёртый выход этапа — правила ремесла. Одобрения у них нет (их читают,
+    # а не утверждают), поэтому спрашиваем отдельно: без них дальше едет
+    # конвейер без границ из брифа, и заметить это было нечем.
     story_done = all(
         artifact_state(project_dir, project_dir / rel) == "approved"
-        for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md"))
+        for rel in ("bible/idea.md", "bible/season-arc.md", "bible/style-guide.md")
+    ) and craft_notes_problem(project_dir) is None
     if not story_done:
         return ("story", None)
 
@@ -667,14 +764,26 @@ def next_stage(project_dir: Path) -> tuple[str, str | None] | None:
                     and fact_check_problem(project_dir, ep):
                 return (FACT_CHECK_STAGE, ep)
             return ("script", ep)
-        if genre_stage_problem(project_dir, "characters") is None                 and (_cast_problems(project_dir, ep) or refs_problems(project_dir, ep)):
+        if (genre_stage_problem(project_dir, "characters") is None
+                and (_cast_problems(project_dir, ep)
+                     or refs_problems(project_dir, ep))):
             if not _cast_problems(project_dir, ep) \
                     and refs_awaiting_review(project_dir, ep):
                 deferred.append(("characters", ep))
                 continue
             return ("characters", ep)
-        if not (project_dir / "episodes" / ep / "shots.json").exists():
+        # Непригодный план съёмки — работа этапа storyboard, а не повод идти
+        # дальше: тот же вердикт выносит `_paid_stage`, и спрашиваем его одной
+        # функцией, чтобы два места не разошлись в ответе про один файл.
+        if not _shots_usable(project_dir, ep):
             return ("storyboard", ep)
+        # План звука — тоже текстовая работа, и идёт в этом же бесплатном
+        # проходе. Пока его не звали, серия ехала в съёмку молчаливой, а в
+        # режиме кадров ещё и бессмысленной: длительность кадра там задаёт
+        # реплика. Пустой план — законный ответ («серия без звука»), поэтому
+        # спрашиваем существование файла, а не его содержимое.
+        if not (project_dir / "episodes" / ep / "audio.json").exists():
+            return ("audio_plan", ep)
 
     # Платная половина — ВТОРЫМ проходом, после текстовой работы всех серий.
     # Тот же принцип, что и с отложенными сериями (D-7): бесплатная работа по
@@ -705,6 +814,24 @@ def _pending(manifest, item_id: str) -> bool:
         return True
 
 
+def _shots_usable(project_dir: Path, episode: str) -> bool:
+    """Читается ли план съёмки серии.
+
+    Один ответ на этот вопрос для обеих половин резолвера: бесплатная не должна
+    идти писать звук к непригодному плану, платная — тратить по нему деньги.
+    Пустой `{}` тоже непригоден: раньше резолвер смотрел на существование файла
+    и считал такую раскадровку сделанной.
+    """
+    from factory.shots import ShotsError, load_shots
+
+    try:
+        load_shots(Path(project_dir) / "episodes" / episode / "shots.json",
+                   project_dir, episode)
+    except (ShotsError, OSError, ValueError):
+        return False
+    return True
+
+
 def _paid_stage(project_dir: Path, episode: str) -> str | None:
     """Первый незакрытый платный шаг эпизода или None, если всё сделано."""
     from factory.audio_plan import AudioPlanError, load_audio_plan
@@ -712,7 +839,7 @@ def _paid_stage(project_dir: Path, episode: str) -> str | None:
 
     episode_dir = Path(project_dir) / "episodes" / episode
     try:
-        shots = load_shots(episode_dir / "shots.json", project_dir)
+        shots = load_shots(episode_dir / "shots.json", project_dir, episode)
     except (ShotsError, OSError, ValueError):
         # Непригодный план съёмки — работа этапа storyboard, не платной половины.
         return "storyboard"
@@ -741,7 +868,8 @@ def _paid_stage(project_dir: Path, episode: str) -> str | None:
         """
         for n in numbers:
             try:
-                if manifest.get(f"{episode}/{prefix}/{n:03d}")["status"]                         not in accepted:
+                status = manifest.get(f"{episode}/{prefix}/{n:03d}")["status"]
+                if status not in accepted:
                     return False
             except ManifestError:
                 return False

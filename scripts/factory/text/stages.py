@@ -91,8 +91,12 @@ STAGES: dict[str, Stage] = {
         inputs=("project.json", "bible/style-guide.md", "bible/craft-notes.md",
                 "episodes/{ep}/script.md"),
         outputs=("episodes/{ep}/shots.json",), pipeline_stage="storyboard"),
-    "audio": Stage(
-        id="audio", label="План звука", skill="factory-audio",
+    # Имя `audio_plan`, а не `audio`: платная стадия озвучки называется
+    # `audio`, и одно имя на две разные работы означало, что резолвер не может
+    # назвать эту — он её и не называл никогда (ревью 2026-09-09). Скилл при
+    # этом остаётся `factory-audio`: методика одна.
+    "audio_plan": Stage(
+        id="audio_plan", label="План звука", skill="factory-audio",
         inputs=("project.json", "bible/craft-notes.md",
                 "episodes/{ep}/script.md", "episodes/{ep}/shots.json"),
         outputs=("episodes/{ep}/audio.json",), pipeline_stage="storyboard"),

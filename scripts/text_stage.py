@@ -12,8 +12,9 @@
 показывает её вывод. Логика стадии живёт в `factory/text`, здесь только разбор
 аргументов и печать — как и у остальных CLI конвейера.
 
-Коды выхода: 0 успех; 1 сбой движка или негодные данные стадии; 3 проверка
-фактов не пройдена (сценарий не одобрить).
+Коды выхода: 0 успех; 1 сбой движка или негодные данные стадии; 2 гейт стадии
+не пускает (проверять нечего — сначала предыдущий этап); 3 проверка фактов не
+пройдена (сценарий не одобрить).
 """
 from __future__ import annotations
 
@@ -61,6 +62,12 @@ def _run_factcheck(args, project_dir: Path) -> int:
     try:
         result = text_factcheck.run(project_dir, ROOT, args.episode,
                                     engine=engine, model=args.model)
+    except text_factcheck.FactCheckBlocked as e:
+        # Код 2 — отказ по контракту входных данных, та же дисциплина, что у
+        # ShotsError в generate_batch: техническим сбоем (1) это не является, и
+        # путать их нельзя — лечится оно не повтором, а предыдущим этапом.
+        print(f"проверка не начата: {e}")
+        return 2
     except text_factcheck.FactCheckError as e:
         print(f"проверка не проведена: {e}")
         return 1

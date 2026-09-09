@@ -58,6 +58,33 @@ class FactCheckError(ValueError):
     """Проверку не провести или её результат не разобрать."""
 
 
+class FactCheckBlocked(FactCheckError):
+    """Проверять нечего: гейт этапа не пускает.
+
+    Отдельный класс, а не текст ошибки: у отказа гейта и у сорванной проверки
+    разная природа и разные коды выхода (2 против 1). Наследование от
+    FactCheckError оставлено сознательно — обработчики, ловящие общий тип, не
+    начнут пропускать отказ гейта наружу трейсбеком.
+    """
+
+
+# Сколько символов ответа модели показать в ошибке разбора. Без хвоста «в ответе
+# нет строки VERDICT» неотличимо от «модель сломалась»: живой прогон 2026-09-09
+# кончился именно этим сообщением, а настоящей причиной был отсутствующий
+# сценарий — в ответе проверяющий прямо это и написал, но текст никто не увидел.
+TAIL_CHARS = 400
+
+
+def _tail(answer: str) -> str:
+    """Хвост ответа модели для сообщения об ошибке."""
+    text = (answer or "").strip()
+    if not text:
+        return "ответ пуст"
+    if len(text) > TAIL_CHARS:
+        text = "…" + text[-TAIL_CHARS:]
+    return f"вот чем он кончился:\n{text}"
+
+
 @dataclass
 class Claim:
     """Одно проверяемое утверждение и запрос, которым его проверяют."""
@@ -137,7 +164,7 @@ def parse_claims(answer: str) -> list[Claim]:
         if not text or not query:
             raise FactCheckError(
                 "в блоке CLAIM нет поля 'утверждение' или 'запрос': "
-                + block.group("body").strip()[:200])
+                + block.group("body").strip()[:TAIL_CHARS])
         claims.append(Claim(text=text, query=query))
     return claims
 
@@ -222,7 +249,7 @@ def parse_verdict(answer: str) -> str:
     if not match:
         raise FactCheckError(
             "в ответе нет строки '=== VERDICT: passed ===' или "
-            "'=== VERDICT: failed ==='")
+            "'=== VERDICT: failed ==='; " + _tail(answer))
     return match.group("value").lower()
 
 
@@ -381,6 +408,18 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     if not is_safe_name(episode):
         raise FactCheckError(f"недопустимое имя серии: {episode!r}")
     project_dir = Path(project_dir)
+
+    # Гейт стоит ЗДЕСЬ, а не в точках входа: путей запуска два (CLI и панель), и
+    # проверка, скопированная в оба, однажды достанется только одному. Так уже
+    # было: гейт `_fact_check_stage_problems` существовал с самого начала, но
+    # звали его только `factory.py check` — а панель пускала проверку на серию
+    # без сценария, и проверяющий честно отказывался выносить вердикт по
+    # пустоте. Человек читал это как поломку движка.
+    from factory.preprod import fact_check_input_problems
+
+    blockers = fact_check_input_problems(project_dir, episode)
+    if blockers:
+        raise FactCheckBlocked("; ".join(blockers))
 
     # Готовый провайдер поиска в аргументе — сам себе доказательство
     # доступности; спрашивать после этого «а есть ли чем искать» незачем.

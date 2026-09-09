@@ -44,13 +44,33 @@ def frame_path(episode_dir: Path, n: int) -> Path:
     return Path(episode_dir) / "storyboard" / f"{n:03d}.png"
 
 
-def load_shots(path: Path, project_dir: Path) -> dict:
+def stills_mode(shots: dict) -> bool:
+    """Эпизод из кадров под озвучку: отрезков в плане нет вовсе.
+
+    ЕДИНСТВЕННЫЙ ответ на вопрос «какой это режим» — и он свойство ПЛАНА, а не
+    флага проекта. Флаг `visual_mode` говорит стадии раскадровки, что писать;
+    дальше по конвейеру спрашивают уже написанное. Читателей четверо (приёмка,
+    валидатор плана звука, смета, монтажный лист), и пока монтаж со сметой
+    смотрели на флаг, а приёмка — на план, расхождение давало несобираемое:
+    render требовал принятых отрезков, а лист собирался из кадров
+    (ревью конвейера 2026-09-09).
+    """
+    return not (shots.get("segments") or [])
+
+
+def load_shots(path: Path, project_dir: Path, episode: str | None = None) -> dict:
     """Загрузить и проверить план съёмки эпизода.
 
     Всё, что мешает загрузить план, поднимается своим типом ошибки: вызывающий
     код ловит ShotsError и отвечает кодом возврата, а не трейсбеком (D-4 первого
     живого прогона). Отсутствующий файл и битый JSON — такая же непригодность
     входных данных, как нарушенный инвариант.
+
+    `episode` — серия, для которой план читают. Совпадение с полем `episode`
+    внутри файла проверяется ЗДЕСЬ, потому что из этого поля строятся id единиц
+    манифеста, а файлы кладутся по каталогу серии: скопированный в ep02 план с
+    `episode: ep01` оплачивал бы генерацию в манифест первой серии, а картинки
+    складывал во вторую (ревью конвейера 2026-09-09).
     """
     path = Path(path)
     try:
@@ -61,6 +81,18 @@ def load_shots(path: Path, project_dir: Path) -> dict:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
         raise ShotsError(f"{path}: not valid JSON — {e}") from None
+
+    if not isinstance(data, dict):
+        raise ShotsError(f"{path}: ждали объект, получили {type(data).__name__}")
+
+    declared = data.get("episode")
+    if not isinstance(declared, str) or not declared.strip():
+        raise ShotsError(
+            f"{path}: нет поля episode — по нему строятся id единиц манифеста")
+    if episode is not None and declared != episode:
+        raise ShotsError(
+            f"{path}: план серии {declared!r}, а читают его для {episode!r} — "
+            "проверь, не скопирован ли он из другой серии")
 
     frames = data.get("frames", [])
     try:
@@ -127,4 +159,9 @@ def load_shots(path: Path, project_dir: Path) -> dict:
         if not s.get("prompt"):
             raise ShotsError(f"segment {n}: empty prompt")
 
+    # Ключи нормализуются здесь, а не у каждого потребителя: смета, генерация и
+    # монтаж читают `shots["segments"]` напрямую, и в режиме кадров отсутствие
+    # ключа означало бы KeyError в трёх местах вместо пустого списка в одном.
+    data["frames"] = frames
+    data["segments"] = segments
     return data

@@ -51,7 +51,7 @@ def test_every_stage_points_at_an_existing_skill():
 
 def test_stages_cover_the_text_half():
     assert set(stages.STAGES) >= {"pitch", "story", "script", "characters",
-                                  "storyboard", "audio"}
+                                  "storyboard", "audio_plan"}
 
 
 # --- сборка промпта --------------------------------------------------------

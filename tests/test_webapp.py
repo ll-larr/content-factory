@@ -296,9 +296,22 @@ def _retype(root, **fields):
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+def _drop_segments(root):
+    """Режим кадров в ПЛАНЕ: отрезков нет вовсе.
+
+    Смета читает план, а не флаг проекта, — тот же источник, что у приёмки и у
+    монтажного листа. Флаг остаётся входом стадии раскадровки.
+    """
+    path = root / "pilot" / "episodes" / "ep01" / "shots.json"
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    plan["segments"] = []
+    path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+
+
 def test_stills_mode_does_not_charge_for_segments(root):
     """В режиме кадров отрезки не снимаются — платить за них не за что."""
     _retype(root, genre="educational", visual_mode="stills")
+    _drop_segments(root)
 
     est = webapp.episode_estimate(root / "pilot", "ep01", KNOWLEDGE)
     stages = {row["stage"] for row in est["rows"]}
@@ -503,3 +516,58 @@ def test_unknown_stage_is_named_not_hidden():
 
 def test_no_next_step_is_none():
     assert webapp._next_step(None) is None
+
+
+# --- находки ревью конвейера 2026-09-09 -----------------------------------
+
+def test_next_step_gives_a_stage_the_panel_can_actually_run():
+    """Резолвер называет `storyboard_generate`, а CLI знает `storyboard`.
+
+    Кнопка «Запустить конвейер» отправляла имя резолвера прямо в запуск и
+    получала «неизвестная стадия»: конвейер вставал ровно на первом платном
+    шаге. Перевод имени — одно место (`preprod.cli_stage`), панель его только
+    показывает.
+    """
+    step = webapp._next_step(("storyboard_generate", "ep01"))
+
+    assert step["kind"] == "paid"
+    assert step["run"] in webapp.RUNNABLE_STAGES
+    assert step["run"] == "storyboard"
+
+
+def test_next_step_run_name_matches_stage_for_ordinary_paid_stages():
+    for name in ("segments", "audio", "foley", "lipsync", "render"):
+        assert webapp._next_step((name, "ep01"))["run"] == name
+
+
+def test_next_step_text_stage_is_runnable_by_the_panel():
+    step = webapp._next_step(("audio_plan", "ep01"))
+    assert step["kind"] == "text"
+    assert step["run"] in webapp.TEXT_RUNNABLE
+
+
+def test_switching_visual_mode_warns_about_the_written_plan(root):
+    """Режим берётся из плана, поэтому один флаг ничего не переключает.
+
+    Человек, поставивший «кадры» на проекте с уже написанной раскадровкой,
+    иначе решил бы, что отрезки сниматься не будут, — а конвейер продолжил бы
+    снимать их по старому плану и списал деньги.
+    """
+    _retype(root, genre="educational")
+
+    result = webapp.set_project_settings(root / "pilot",
+                                         {"visual_mode": "stills"}, KNOWLEDGE)
+
+    assert result["visual_mode"] == "stills"
+    assert any("ep01" in w for w in result["warnings"])
+    assert any("storyboard" in w for w in result["warnings"])
+
+
+def test_no_warning_when_the_plan_already_matches_the_mode(root):
+    _retype(root, genre="educational")
+    _drop_segments(root)
+
+    result = webapp.set_project_settings(root / "pilot",
+                                         {"visual_mode": "stills"}, KNOWLEDGE)
+
+    assert result["warnings"] == []

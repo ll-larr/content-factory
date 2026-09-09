@@ -35,7 +35,8 @@ shots.json` для ВСЕХ эпизодов по порядку (спека §7
    | `storyboard` | `/factory-storyboard` (episode = `<ep>`) |
    | `storyboard_generate` | `generate_batch.py --stage storyboard` (платно) |
    | `segments` | `generate_batch.py --stage segments` (платно) |
-   | `audio` | нет плана — `/factory-audio`; план есть — `generate_batch.py --stage audio` (платно) |
+   | `audio_plan` | `/factory-audio` (episode = `<ep>`) — пишет `audio.json`; пустой план значит «серия без звука» |
+   | `audio` | `generate_batch.py --stage audio` (платно) |
    | `foley` | `generate_batch.py --stage foley` (платно) |
    | `lipsync` | `generate_batch.py --stage lipsync` (платно) |
    | `render` | `scripts/render.py` (бесплатно) |

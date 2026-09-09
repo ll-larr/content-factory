@@ -21,6 +21,42 @@ def write(path, kind, body, status="draft", **extra):
     return art
 
 
+CRAFT_NOTES_BODY = """---
+status: draft
+---
+не объяснять шутки
+"""
+
+
+def shot_plan(project_dir, episode, audio=True):
+    """Пригодный план съёмки серии (и, по умолчанию, пустой план звука).
+
+    Заглушка `{}` для этого не годится: резолвер читает план, и нечитаемый
+    возвращает на storyboard. Пустой план звука — законная «серия без звука»,
+    он закрывает текстовую половину и пускает резолвер дальше.
+    """
+    ep_dir = Path(project_dir) / "episodes" / episode
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    (ep_dir / "shots.json").write_text(json.dumps(
+        {"episode": episode, "frames": [{"n": 1, "prompt": "кадр"}],
+         "segments": [{"n": 1, "start_frame": 1, "prompt": "движение"}]}),
+        encoding="utf-8")
+    if audio:
+        (ep_dir / "audio.json").write_text(json.dumps(
+            {"voice_lines": [], "music_cues": [], "sfx": []}), encoding="utf-8")
+
+
+def craft_notes(project_dir):
+    """Правила ремесла — четвёртый выход этапа story.
+
+    Без них резолвер честно возвращает story: файл читает каждая творческая
+    стадия, и его отсутствие означает, что этап не доведён.
+    """
+    path = Path(project_dir) / "bible" / "craft-notes.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(CRAFT_NOTES_BODY, encoding="utf-8")
+
+
 CHAR_BODY = "<!-- canonical:appearance -->orange cat<!-- /canonical:appearance -->"
 STYLE_BODY = "<!-- canonical:style -->flat 2D cartoon<!-- /canonical:style -->"
 
@@ -175,8 +211,15 @@ def test_stale_reason_names_the_culprit(tmp_path):
 
 
 def test_story_gate_open_on_fresh_project(tmp_path):
+    """Чужих входов у story нет: садиться за этап можно с первой минуты.
+
+    Ненаписанные правила ремесла — работа САМОГО этапа, поэтому они в own_work,
+    а не в блокерах: гейт «можно ли вести этап» от них не закрывается.
+    """
     p = make_project(tmp_path)
-    assert stage_gate(p, "story") == []
+    blockers, own_work = stage_problems(p, "story", None)
+    assert blockers == []
+    assert any("craft-notes" in s for s in own_work)
 
 
 def test_script_gate_blocked_without_approved_story(tmp_path):
@@ -221,6 +264,7 @@ def test_next_stage_walks_all_episodes_in_order(tmp_path):
     write(p / "bible" / "idea.md", "idea", "идея", status="approved")
     write(p / "bible" / "season-arc.md", "season-arc", "арка", status="approved")
     write(p / "bible" / "style-guide.md", "style-guide", "стиль", status="approved")
+    craft_notes(p)
     assert next_stage(p) == ("script", "ep01")
 
     write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved",
@@ -237,7 +281,9 @@ def test_next_stage_walks_all_episodes_in_order(tmp_path):
     _accept_ref(p, "Мурзик")
     assert next_stage(p) == ("storyboard", "ep01")
 
-    (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
+    # План съёмки настоящий, а не заглушка `{}`: непригодный план резолвер
+    # честно возвращает на storyboard, и заглушка означала бы «этап сделан».
+    shot_plan(p, "ep01")
     assert next_stage(p) == ("script", "ep02")
 
 
@@ -252,6 +298,7 @@ def test_next_stage_returns_to_storyboard_on_unusable_plan(tmp_path):
     for rel, kind in (("bible/idea.md", "idea"), ("bible/season-arc.md", "season-arc"),
                       ("bible/style-guide.md", "style-guide")):
         write(p / rel, kind, "текст", status="approved")
+    craft_notes(p)
     write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
     write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
@@ -287,6 +334,7 @@ def _closed_story(p):
     write(p / "bible/idea.md", "idea", "текст", status="approved")
     write(p / "bible/season-arc.md", "season-arc", "текст", status="approved")
     write(p / "bible/style-guide.md", "style-guide", STYLE_BODY, status="approved")
+    craft_notes(p)
 
 
 def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
@@ -301,7 +349,7 @@ def test_new_character_in_later_episode_reopens_characters_stage(tmp_path):
           status="approved", characters=["Мурзик", "Барсик"])
     write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY, status="approved")
     _accept_ref(p, "Мурзик")
-    (p / "episodes" / "ep01" / "shots.json").write_text("{}", encoding="utf-8")
+    shot_plan(p, "ep01")
 
     assert next_stage(p) == ("characters", "ep02")
 
@@ -679,11 +727,17 @@ from factory.manifest import Manifest  # noqa: E402
 
 
 def _ready_project(tmp_path, shots, audio=None):
-    """Проект, у которого бесплатная половина закрыта, и есть план съёмки."""
+    """Проект, у которого бесплатная половина закрыта, и есть план съёмки.
+
+    Закрытая бесплатная половина включает и план звука: он текстовая работа,
+    и без него резолвер честно просит его написать, а не идёт тратить деньги.
+    Пустой план — законная «серия без звука».
+    """
     p = make_project(tmp_path, episodes=1)
     for rel, kind in (("bible/idea.md", "idea"), ("bible/season-arc.md", "season-arc"),
                       ("bible/style-guide.md", "style-guide")):
         write(p / rel, kind, "текст", status="approved")
+    craft_notes(p)
     write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
     write(p / "bible" / "characters" / "Мурзик.md", "character", CHAR_BODY,
           status="approved")
@@ -691,8 +745,9 @@ def _ready_project(tmp_path, shots, audio=None):
     ep = p / "episodes" / "ep01"
     ep.mkdir(parents=True, exist_ok=True)
     (ep / "shots.json").write_text(json.dumps(shots), encoding="utf-8")
-    if audio is not None:
-        (ep / "audio.json").write_text(json.dumps(audio), encoding="utf-8")
+    if audio is None:
+        audio = {"voice_lines": [], "music_cues": [], "sfx": []}
+    (ep / "audio.json").write_text(json.dumps(audio), encoding="utf-8")
     return p
 
 
@@ -816,6 +871,7 @@ def _educational(tmp_path):
         art = Artifact(path=proj / rel, meta={"status": "approved"}, body="текст")
         art.meta["content_sha"] = art.sha
         save_artifact(art)
+    craft_notes(proj)
     return proj
 
 
@@ -879,3 +935,77 @@ def test_narrative_genre_keeps_characters(tmp_path):
 
     stage, _ = next_stage(proj)
     assert stage == "characters"
+
+
+# --- находки ревью конвейера 2026-09-09 -----------------------------------
+
+def test_story_is_not_done_until_craft_notes_exist(tmp_path):
+    """craft-notes.md — выход этапа story, и его отсутствие обязано быть видно.
+
+    Правила ремесла читает КАЖДАЯ творческая стадия. Пока файла нет, сценарий
+    пишется без границ из брифа, а резолвер этого не замечал: он смотрел только
+    на идею, арку и стайл-гайд (живой прогон 2026-09-09).
+    """
+    p = make_project(tmp_path, episodes=1)
+    for rel, kind in (("bible/idea.md", "idea"),
+                      ("bible/season-arc.md", "season-arc"),
+                      ("bible/style-guide.md", "style-guide")):
+        write(p / rel, kind, "текст", status="approved")
+
+    assert next_stage(p) == ("story", None)
+
+    (p / "bible" / "craft-notes.md").write_text(
+        "---\nstatus: draft\n---\nне объяснять шутки\n", encoding="utf-8")
+    assert next_stage(p) != ("story", None)
+
+
+def test_story_check_names_the_missing_craft_notes(tmp_path):
+    """Это работа самого этапа story, а не чужой блокер."""
+    p = make_project(tmp_path, episodes=1)
+    blockers, own_work = stage_problems(p, "story", None)
+    assert any("craft-notes" in s for s in own_work)
+    assert not any("craft-notes" in s for s in blockers)
+
+
+def test_empty_craft_notes_does_not_count_as_written(tmp_path):
+    """Пустой файл — не правила ремесла: скаффолд не должен закрывать этап."""
+    p = make_project(tmp_path, episodes=1)
+    for rel, kind in (("bible/idea.md", "idea"),
+                      ("bible/season-arc.md", "season-arc"),
+                      ("bible/style-guide.md", "style-guide")):
+        write(p / rel, kind, "текст", status="approved")
+    (p / "bible" / "craft-notes.md").write_text(
+        "---\nstatus: draft\n---\n\n", encoding="utf-8")
+
+    assert next_stage(p) == ("story", None)
+
+
+def test_next_stage_asks_for_the_audio_plan_before_spending(tmp_path):
+    """План звука — текстовая работа, и идёт ДО платной половины.
+
+    Резолвер не звал его никогда: после раскадровки он уходил в кадры, а
+    `_paid_stage` без audio.json просто шёл к монтажу. Серия собиралась
+    молчаливой, а в режиме `stills` — ещё и бессмысленной: длительность кадра
+    там задаёт реплика, и без плана каждый кадр висит минимум.
+    """
+    p = _ready_project(tmp_path, SHOTS_1)
+    (p / "episodes" / "ep01" / "audio.json").unlink(missing_ok=True)
+
+    assert next_stage(p) == ("audio_plan", "ep01")
+
+
+def test_empty_audio_plan_closes_the_stage(tmp_path):
+    """Молчаливая серия законна: пустой план — решение человека, а не пропуск."""
+    p = _ready_project(tmp_path, SHOTS_1,
+                       {"voice_lines": [], "music_cues": [], "sfx": []})
+    assert next_stage(p) == ("storyboard_generate", "ep01")
+
+
+def test_audio_plan_stage_needs_a_shot_plan(tmp_path):
+    """Писать звук не к чему, пока нет раскадровки: реплики привязаны к её единицам."""
+    p = make_project(tmp_path, episodes=1)
+    write(p / "episodes" / "ep01" / "script.md", "script", "с1", status="approved")
+
+    blockers, _ = stage_problems(p, "audio_plan", "ep01")
+
+    assert any("shots.json" in s for s in blockers)

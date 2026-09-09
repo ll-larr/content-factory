@@ -327,6 +327,11 @@ def _stills_project(proj):
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     ep = proj / "episodes" / "ep01"
+    # Режим определяется ПЛАНОМ: в режиме кадров отрезков в нём нет вовсе.
+    # Флаг проекта — вход стадии раскадровки, а не второй источник правды.
+    plan = json.loads((ep / "shots.json").read_text(encoding="utf-8"))
+    plan["segments"] = []
+    (ep / "shots.json").write_text(json.dumps(plan), encoding="utf-8")
     (ep / "storyboard").mkdir(exist_ok=True)
     manifest = Manifest(proj / "manifest.json")
     for n in (1, 2, 3):
@@ -553,3 +558,48 @@ def test_review_gate_passes_when_frames_are_accepted(tmp_path):
 
     assert montage.review_problems(manifest, "ep01", STILLS_SHOTS,
                                    STILLS_PLAN) == {}
+
+
+def test_mode_follows_the_shot_plan_not_the_project_flag(proj):
+    """Режим — свойство ПЛАНА, а не флага проекта: источник правды один.
+
+    Так его уже читают приёмка (`review_problems`) и валидатор плана звука.
+    Монтаж читал флаг, и на расхождении получалось несовместимое: render
+    требовал принятых отрезков, а лист собирал из кадров.
+    """
+    project = _stills_project(proj)          # флаг говорит «кадры»…
+    ep = proj / "episodes" / "ep01"
+    plan = json.loads((ep / "shots.json").read_text(encoding="utf-8"))
+    plan["segments"] = [{"n": 1, "start_frame": 1, "prompt": "движение"},
+                        {"n": 2, "start_frame": 2, "prompt": "ещё"}]
+    (ep / "shots.json").write_text(json.dumps(plan), encoding="utf-8")
+    shots = load_shots(ep / "shots.json", proj)
+    assert shots["segments"], "в этом плане отрезки есть"
+
+    sheet = montage.build_edit_list(project, proj, "ep01", shots,
+                                    Manifest(proj / "manifest.json"))
+
+    assert sheet["mode"] == "video"          # …а план говорит «отрезки»
+    assert sheet["stills"] == []
+
+
+def test_video_flag_with_a_plan_without_segments_builds_stills(proj):
+    """Обратная сторона того же правила: план без отрезков — это режим кадров."""
+    project = load_project(proj / "project.json")   # флага stills нет
+    ep = proj / "episodes" / "ep01"
+    plan = json.loads((ep / "shots.json").read_text(encoding="utf-8"))
+    plan["segments"] = []
+    (ep / "shots.json").write_text(json.dumps(plan), encoding="utf-8")
+    (ep / "storyboard").mkdir(exist_ok=True)
+    manifest = Manifest(proj / "manifest.json")
+    for n in (1, 2, 3):
+        (ep / "storyboard" / f"{n:03d}.png").write_bytes(b"stub")
+        _accept(manifest, f"ep01/storyboard/{n:03d}", "frame")
+    manifest.save()
+
+    shots = load_shots(ep / "shots.json", proj)
+    sheet = montage.build_edit_list(project, proj, "ep01", shots,
+                                    Manifest(proj / "manifest.json"))
+
+    assert sheet["mode"] == "stills"
+    assert [s["n"] for s in sheet["stills"]] == [1, 2, 3]

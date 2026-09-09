@@ -16,7 +16,7 @@ from factory.manifest import Manifest, ManifestError
 from factory.models import ModelError
 from factory.project import ProjectError, load_project
 from factory.providers import get_provider
-from factory.shots import ShotsError, load_shots
+from factory.shots import ShotsError, load_shots, stills_mode
 
 KNOWLEDGE_DIR = Path("knowledge")
 
@@ -49,7 +49,7 @@ def episode_estimate(project_dir: Path | str, episode: str,
         raise EstimateError(f"непригодный project.json: {e}") from None
 
     try:
-        shots = load_shots(episode_dir / "shots.json", project_dir)
+        shots = load_shots(episode_dir / "shots.json", project_dir, episode)
     except (ShotsError, OSError) as e:
         raise EstimateError(f"нет пригодного shots.json: {e}") from None
 
@@ -80,7 +80,7 @@ def episode_estimate(project_dir: Path | str, episode: str,
     # В режиме кадров отрезки не снимаются вовсе: эпизод собирается из кадров
     # под озвучку. Это дешевле съёмки примерно в десять раз и для познавательного
     # жанра — норма, а не экономия.
-    segments = [] if project.visual_mode == "stills" else [
+    segments = [] if stills_mode(shots) else [
         s for s in shots["segments"]
         if pending(f"{episode}/segments/{s['n']:03d}")]
     if segments:

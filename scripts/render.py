@@ -122,7 +122,8 @@ def main(argv=None) -> int:
     fmt = args.format or montage.format_for(project)
 
     try:
-        shots = load_shots(episode_dir / "shots.json", project_dir)
+        shots = load_shots(episode_dir / "shots.json", project_dir,
+                           args.episode)
     except ShotsError as e:
         return _fail("ПЛАН СЪЁМКИ НЕ ПРОШЁЛ ПРОВЕРКУ:", str(e).splitlines())
     try:

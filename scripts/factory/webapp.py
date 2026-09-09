@@ -19,8 +19,9 @@ from pathlib import Path
 
 from factory import estimate, keys
 from factory.manifest import Manifest, ManifestError
-from factory.preprod import (STAGE_LABELS, artifact_state, effective_feedback,
-                             episode_ids, next_stage, project_artifacts)
+from factory.preprod import (FACT_CHECK_STAGE, STAGE_LABELS, artifact_state,
+                             effective_feedback, episode_ids, next_stage,
+                             project_artifacts, stage_problems)
 from factory.project import (FORMAT_LABELS, LANGUAGES, ProjectError,
                              load_project)
 from factory.providers import get_provider
@@ -140,11 +141,15 @@ def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
     (`PAID_STAGES`, `TEXT_RUNNABLE`), а не заводится третьим мнением: кнопка,
     решающая это самостоятельно, однажды отправит платную стадию мимо сметы.
     """
-    from factory.preprod import PAID_STAGES
+    from factory.preprod import PAID_STAGES, cli_stage
 
     if stage is None:
         return None
     name, episode = stage
+    # Имя для показа и имя для запуска — разные вещи ровно у кадров
+    # (`storyboard_generate` против `--stage storyboard`). Перевод берётся у
+    # `preprod.cli_stage`, второго словаря имён не заводить.
+    run = cli_stage(name)
     if name in PAID_STAGES:
         kind = "paid"
     elif name in TEXT_RUNNABLE:
@@ -153,7 +158,7 @@ def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
         # Резолвер вернул шаг, которого панель запускать не умеет. Молча
         # спрятать кнопку значит соврать, что делать нечего.
         kind = "unknown"
-    return {"stage": name, "episode": episode, "kind": kind,
+    return {"stage": name, "episode": episode, "kind": kind, "run": run,
             "label": STAGE_LABELS.get(name, name)}
 
 
@@ -170,7 +175,14 @@ def _fact_check_block(project_dir: Path, episode: str,
 
     if not genre_requires_check(project_dir, knowledge_dir):
         return None
-    return report_state(project_dir, episode)
+
+    state = report_state(project_dir, episode)
+    # Чего не хватает, чтобы кнопку вообще было чем нажимать. Тот же гейт, что
+    # отказывает запуску (`factcheck.run`) и печатает `factory.py check`:
+    # предлагать действие, которое сервер отобьёт, — это разговор двух панелей
+    # об одном состоянии (D-3).
+    state["blockers"] = stage_problems(project_dir, FACT_CHECK_STAGE, episode)[0]
+    return state
 
 
 def _relative_file(project_dir: Path, file: str | None) -> str | None:
@@ -273,7 +285,7 @@ RUNNABLE_STAGES = PAID_RUNNABLE + ("render",)
 # движок — модель по ключу. Список закрытый по той же причине, что у платных:
 # имя приходит из браузера и становится аргументом команды.
 TEXT_RUNNABLE = ("pitch", "research", "story", "script", "characters",
-                 "storyboard", "audio", "factcheck")
+                 "storyboard", "audio_plan", "factcheck")
 
 
 def run_stage(runner, projects_root: Path, project: str, episode: str,
@@ -446,7 +458,40 @@ def set_project_settings(project_dir: Path, changes: dict,
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
-    return {"language": data.get("language"), "visual_mode": data.get("visual_mode")}
+    return {"language": data.get("language"),
+            "visual_mode": data.get("visual_mode"),
+            "warnings": _mode_warnings(Path(project_dir),
+                                       changes.get("visual_mode"))}
+
+
+def _mode_warnings(project_dir: Path, mode: str | None) -> list[str]:
+    """Серии, чья написанная раскадровка противоречит выбранному режиму.
+
+    Режим — свойство ПЛАНА (`shots.stills_mode`), поэтому смена флага сама по
+    себе не отменяет отрезки: конвейер продолжит снимать их по написанному
+    плану. Молча оставить это значит списать деньги за то, что человек только
+    что выключил.
+    """
+    if mode is None:
+        return []
+    from factory.shots import ShotsError, load_shots, stills_mode
+
+    warnings: list[str] = []
+    for episode in sorted(p.name for p in
+                          (project_dir / "episodes").glob("*")
+                          if (p / "shots.json").exists()):
+        try:
+            shots = load_shots(project_dir / "episodes" / episode / "shots.json",
+                               project_dir, episode)
+        except (ShotsError, OSError, ValueError):
+            continue
+        written = "stills" if stills_mode(shots) else "video"
+        if written != mode:
+            warnings.append(
+                f"{episode}: раскадровка написана в режиме {written!r} — "
+                "режим сменится только после того, как этап storyboard "
+                "перепишет план")
+    return warnings
 
 
 # --- создание проекта ------------------------------------------------------

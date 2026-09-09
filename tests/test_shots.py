@@ -207,3 +207,46 @@ def test_ref_inside_project_still_ok(tmp_path):
     (tmp_path / "bible" / "characters" / "kepler-ref.png").write_bytes(b"x")
     data = load_shots(write(tmp_path, GOOD), tmp_path)
     assert data["frames"][1]["refs"] == ["bible/characters/kepler-ref.png"]
+
+
+# --- находки ревью конвейера 2026-09-09 -----------------------------------
+
+def test_plan_without_episode_is_refused(tmp_path):
+    """`episode` — часть контракта: по нему строятся id единиц манифеста.
+
+    Без него генерация падала KeyError уже после гейтов и сметы, то есть
+    техническим сбоем вместо отказа по данным.
+    """
+    data = {k: v for k, v in GOOD.items() if k != "episode"}
+    (tmp_path / "bible" / "characters").mkdir(parents=True)
+    (tmp_path / "bible" / "characters" / "kepler-ref.png").write_bytes(b"x")
+    with pytest.raises(ShotsError, match="episode"):
+        load_shots(write(tmp_path, data), tmp_path)
+
+
+def test_plan_of_another_episode_is_refused(tmp_path):
+    """План чужой серии оплачивался бы в её манифест, а файлы легли бы в эту.
+
+    Скопированный shots.json с `episode: ep01` в папке ep02 писал единицы под
+    именем ep01, а картинки — в episodes/ep02: манифест и диск расходились, и
+    заметить это можно было только по счёту.
+    """
+    (tmp_path / "bible" / "characters").mkdir(parents=True)
+    (tmp_path / "bible" / "characters" / "kepler-ref.png").write_bytes(b"x")
+    path = write(tmp_path, GOOD)
+
+    with pytest.raises(ShotsError, match="ep02"):
+        load_shots(path, tmp_path, episode="ep02")
+
+    assert load_shots(path, tmp_path, episode="ep01")["episode"] == "ep01"
+
+
+def test_plan_without_segments_loads_as_empty_list(tmp_path):
+    """Режим кадров: отрезков нет вовсе, и это не отсутствующий ключ.
+
+    Потребители читают `shots["segments"]` напрямую — нормализуем здесь, чтобы
+    KeyError не всплывал в смете и в генерации.
+    """
+    data = {"episode": "ep01", "frames": [{"n": 1, "prompt": "кадр"}]}
+    plan = load_shots(write(tmp_path, data), tmp_path)
+    assert plan["segments"] == []
