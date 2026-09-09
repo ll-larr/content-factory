@@ -29,6 +29,110 @@ class EstimateError(ValueError):
     """Смету не посчитать: негодные входные данные эпизода."""
 
 
+# --- прогноз до раскадровки ------------------------------------------------
+#
+# Смета выше считает ФАКТ: сколько единиц в плане и почём. Прогноз отвечает на
+# другой вопрос — «во сколько обойдётся готовое видео», — и задают его ДО того,
+# как план написан. Считать его можно, потому что всё нужное в брифе уже есть:
+# длительность серии, число серий, длительность отрезка и выбранные модели.
+#
+# Числа ниже — ДОПУЩЕНИЯ ПЛАНИРОВЩИКА, а не замеры, и они называются человеку
+# вслух (`assumptions` в ответе). Врать точностью тут хуже, чем не отвечать:
+# прогноз — нижняя граница, «от ~$X», и по ходу он растёт.
+
+# Сколько держится кадр в режиме stills. Настоящую длительность задаёт реплика,
+# к нему привязанная, и меряет её монтаж; здесь — оценка сверху по числу
+# кадров, то есть снизу по цене.
+FORECAST_STILL_SECONDS = 20
+
+# Средняя длина реплики диктора. TTS платится ЗА ВЫЗОВ, поэтому цена зависит от
+# числа реплик, а не от секунд: реплика в 12 секунд — обычная фраза-другая.
+FORECAST_LINE_SECONDS = 12
+
+
+def forecast(project_dir: Path | str,
+             knowledge_dir: Path | str = KNOWLEDGE_DIR) -> dict:
+    """Во сколько обойдётся весь проект по брифу — до всякой раскадровки.
+
+    Возвращает ту же форму, что и `episode_estimate`, плюс `assumptions`:
+    строки о том, из чего собран расчёт. Музыка, эффекты и фоли в прогноз НЕ
+    входят — их в плане может не быть вовсе, и включать их в нижнюю границу
+    значило бы завысить её.
+    """
+    project_dir = Path(project_dir)
+    try:
+        project = load_project(project_dir / "project.json")
+    except (ProjectError, OSError, ValueError) as e:
+        raise EstimateError(f"непригодный project.json: {e}") from None
+
+    episodes = int(project.raw.get("episodes") or 1)
+    seconds = project.raw.get("episode_duration_sec") or project.raw.get("duration_sec")
+    if not seconds:
+        raise EstimateError(
+            "в брифе нет длительности серии — прогнозировать нечего")
+    seconds = int(seconds)
+
+    stills = project.visual_mode == "stills"
+    rows: list[dict] = []
+    problems: list[str] = []
+    assumptions = [
+        f"{episodes} × {seconds} с из брифа",
+        f"реплика диктора ≈ {FORECAST_LINE_SECONDS} с (TTS платится за вызов)",
+    ]
+
+    if stills:
+        frames = _ceil_div(seconds, FORECAST_STILL_SECONDS) * episodes
+        segments = 0
+        assumptions.append(f"кадр держится ≈ {FORECAST_STILL_SECONDS} с")
+    else:
+        segments = _ceil_div(seconds, project.segment_seconds) * episodes
+        # По кадру на отрезок: отрезку нужен стартовый кадр, а стык планов
+        # делает монтаж (`end_frame` по умолчанию не ставится).
+        frames = segments
+        assumptions.append(
+            f"отрезок {project.segment_seconds} с, по кадру на отрезок")
+
+    if frames:
+        _add_row(rows, problems, "storyboard", frames, lambda: _unit(
+            project.image_provider, project.image_model, knowledge_dir,
+            {"resolution": project.resolution, "tier": project.image_tier}))
+    if segments:
+        _add_row(rows, problems, "segments", segments, lambda: _unit(
+            project.video_provider, project.video_model, knowledge_dir,
+            {"resolution": project.resolution, "tier": project.video_tier,
+             "duration": project.segment_seconds}))
+
+    lines = _ceil_div(seconds, FORECAST_LINE_SECONDS) * episodes
+    _add_row(rows, problems, "voice_lines", lines, lambda: _unit(
+        project.audio_provider("tts"), project.audio_model("tts"), knowledge_dir,
+        {"tier": project.audio_tier("tts"), "duration": 0}))
+
+    return {"rows": rows, "total": sum(r["cost"] for r in rows),
+            "problems": problems, "assumptions": assumptions,
+            "episodes": episodes}
+
+
+def _ceil_div(value: int, by: int) -> int:
+    return -(-int(value) // int(by))
+
+
+def _unit(provider_name: str, model: str, knowledge_dir, params: dict) -> float:
+    return get_provider(provider_name, knowledge_dir).estimate(model, params)
+
+
+def _add_row(rows: list[dict], problems: list[str], stage: str, count: int,
+             unit) -> None:
+    """Строка прогноза; несчитаемая роль уходит в problems, а не роняет ответ.
+
+    Ровно та же дисциплина, что и в смете: человек должен увидеть и цену
+    известного, и список неизвестного.
+    """
+    try:
+        rows.append({"stage": stage, "count": count, "cost": count * unit()})
+    except (ProjectError, ModelError, ValueError) as e:
+        problems.append(f"{stage}: {e}")
+
+
 def episode_estimate(project_dir: Path | str, episode: str,
                      knowledge_dir: Path | str = KNOWLEDGE_DIR) -> dict:
     """Что осталось снять в эпизоде и во сколько это обойдётся.

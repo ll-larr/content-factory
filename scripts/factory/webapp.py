@@ -47,7 +47,7 @@ AUTONOMY_MODES = ("checkpoints", "full")
 # новая настройка молча пропадала по дороге — панель говорила «Сохранено»,
 # а в project.json не попадало ничего.
 SETTABLE_FIELDS = ("language", "visual_mode", "autonomy", "segment_seconds",
-                   "budget_usd")
+                   "budget_usd", "episode_duration_sec")
 
 
 class WebappError(ValueError):
@@ -158,6 +158,11 @@ def project_overview(project_dir: Path,
             if item_id.startswith("bible/characters/")
         ],
         "next": _next_step(stage),
+        # Во сколько обойдётся готовое видео — вопрос, который задают ДО
+        # раскадровки, и ответ на него у панели есть: длительность из брифа и
+        # выбранные модели. Непосчитанный прогноз — не ошибка проекта: в брифе
+        # может не быть длительности, и тогда строки просто нет.
+        "forecast": _forecast_or_none(project_dir, knowledge_dir),
         "budget": {"limit": float(budget) if budget is not None else None,
                    "spent": manifest.credits_total()},
     }
@@ -422,6 +427,28 @@ def episode_estimate(project_dir: Path, episode: str,
         raise WebappError(str(e)) from None
 
 
+def _forecast_or_none(project_dir: Path, knowledge_dir) -> dict | None:
+    try:
+        return estimate.forecast(project_dir, knowledge_dir)
+    except estimate.EstimateError:
+        return None
+
+
+def project_forecast(project_dir: Path,
+                     knowledge_dir: Path | str = Path("knowledge")) -> dict:
+    """Во сколько обойдётся готовое видео по брифу — до всякой раскадровки.
+
+    Тот же расчёт, что печатает CLI: `estimate.forecast`. Панель показывает его
+    там, где плана съёмки ещё нет, — иначе на вопрос «сколько это будет стоить»
+    она отвечала «станет известно после раскадровки», имея на руках и
+    длительность серии, и выбранные модели.
+    """
+    try:
+        return estimate.forecast(project_dir, knowledge_dir)
+    except estimate.EstimateError as e:
+        raise WebappError(str(e)) from None
+
+
 def project_estimate(project_dir: Path,
                      knowledge_dir: Path | str = Path("knowledge")) -> dict:
     """Смета остатка по ВСЕМУ проекту — то, что человек видит перед стартом
@@ -440,6 +467,7 @@ def project_estimate(project_dir: Path,
     project_dir = Path(project_dir)
     episodes: list[dict] = []
     problems: list[str] = []
+    unplanned: list[str] = []
     total = 0.0
     for ep in episode_ids(project_dir):
         if not (project_dir / "episodes" / ep / "shots.json").exists():
@@ -447,9 +475,10 @@ def project_estimate(project_dir: Path,
             # Пробрасывать сюда `[Errno 2] No such file or directory` значит
             # показать человеку перед стартом строку, которая читается как
             # поломка панели.
-            problems.append(
-                f"{ep}: план съёмки ещё не написан — сколько будет стоить, "
-                "станет известно после раскадровки")
+            # Цену такой серии называет ПРОГНОЗ (ниже, одной строкой на весь
+            # проект): «станет известно после раскадровки» было отказом
+            # отвечать на вопрос, ответ на который у панели есть.
+            unplanned.append(ep)
             continue
         try:
             one = estimate.episode_estimate(project_dir, ep, knowledge_dir)
@@ -470,8 +499,23 @@ def project_estimate(project_dir: Path,
         spent = Manifest(project_dir / "manifest.json").credits_total()
         budget = {"limit": float(limit), "spent": spent,
                   "left": float(limit) - spent}
+    # Прогноз по брифу: он нужен ровно там, где плана ещё нет. Считается по
+    # всему проекту, поэтому серии без плана называются отдельно — иначе
+    # человек не поймёт, к чему относится вторая сумма.
+    forecast = None
+    if unplanned:
+        try:
+            forecast = estimate.forecast(project_dir, knowledge_dir)
+            forecast["episodes_without_plan"] = unplanned
+            # Что прогноз посчитать НЕ смог (ненастроенная роль звука,
+            # непрочитанная карточка), человек обязан увидеть рядом с суммой:
+            # иначе «от ~$0.15» читается как полная цена, а озвучки в ней нет.
+            problems += [f"прогноз: {p}" for p in forecast["problems"]]
+        except estimate.EstimateError as e:
+            problems.append(f"прогноз не посчитать: {e}")
+
     return {"episodes": episodes, "total": total, "problems": problems,
-            "budget": budget}
+            "budget": budget, "forecast": forecast}
 
 
 def keys_state(root: Path | str = Path(".")) -> list[dict]:
@@ -616,6 +660,14 @@ def set_project_settings(project_dir: Path, changes: dict,
     if "segment_seconds" in changes:
         data["segment_seconds"] = _checked_segment_seconds(
             data, changes["segment_seconds"], knowledge_dir)
+
+    if "episode_duration_sec" in changes:
+        # Та же проверка, что в мастере нового проекта: длительность —
+        # положительное целое до потолка. Из неё считается прогноз стоимости,
+        # поэтому «полчаса строкой» здесь дороже опечатки в имени.
+        data["episode_duration_sec"] = _positive_int(
+            changes["episode_duration_sec"], "длительность серии",
+            MAX_DURATION_SEC)
 
     if "budget_usd" in changes:
         limit = changes["budget_usd"]

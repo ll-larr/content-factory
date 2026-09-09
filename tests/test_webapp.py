@@ -761,13 +761,16 @@ def test_project_estimate_sums_every_episode(root):
 
 
 def test_project_estimate_survives_an_episode_without_a_plan(root):
-    """Серия без раскадровки — не повод не показать смету по остальным."""
+    """Серия без раскадровки — не повод не показать смету по остальным.
+
+    Её цену называет прогноз по брифу, а не строка «неизвестно».
+    """
     _retype(root, episodes=2)
 
     est = webapp.project_estimate(root / "pilot", KNOWLEDGE)
 
     assert [e["episode"] for e in est["episodes"]] == ["ep01"]
-    assert any("ep02" in p for p in est["problems"])
+    assert est["forecast"]["episodes_without_plan"] == ["ep02"]
 
 
 def test_project_estimate_reports_the_ceiling_when_it_is_set(root):
@@ -778,16 +781,120 @@ def test_project_estimate_reports_the_ceiling_when_it_is_set(root):
     assert webapp.project_estimate(root / "pilot", KNOWLEDGE)["budget"] is None
 
 
-def test_missing_shot_plan_reads_as_unwritten_work_not_as_a_failure(root):
-    """«Раскадровки ещё нет» — это состояние конвейера, а не поломка.
+def test_missing_shot_plan_is_not_reported_as_a_failure(root):
+    """«Раскадровки ещё нет» — состояние конвейера, а не поломка.
 
-    Перед стартом автономного прогона человек видит смету; строка с
-    `[Errno 2] No such file or directory` читается там как сбой панели, хотя
-    означает всего лишь, что план съёмки этой серии ещё предстоит написать.
+    Строка с `[Errno 2] No such file or directory` перед стартом читается как
+    сбой панели, хотя означает лишь, что план этой серии ещё предстоит написать.
     """
     _retype(root, episodes=2)
 
     problems = webapp.project_estimate(root / "pilot", KNOWLEDGE)["problems"]
 
-    assert any("ep02" in p and "не написан" in p for p in problems)
     assert not any("Errno" in p for p in problems)
+
+
+# --- прогноз стоимости до раскадровки (2026-09-09) -------------------------
+
+def test_forecast_prices_an_episode_that_has_no_plan_yet(root):
+    """Сколько будет стоить готовое видео, известно ДО раскадровки.
+
+    Из брифа известна длительность серии и их число, из настроек — модели и
+    длительность отрезка. Этого хватает на нижнюю границу: «от ~$X». Раньше
+    панель отвечала «станет известно после раскадровки», хотя всё нужное у неё
+    уже было.
+    """
+    _retype(root, episode_duration_sec=60)
+
+    forecast = webapp.project_forecast(root / "pilot", KNOWLEDGE)
+
+    assert forecast["total"] > 0
+    stages = {row["stage"] for row in forecast["rows"]}
+    assert {"storyboard", "segments"} <= stages
+    # Число отрезков — из длительности серии и длительности отрезка, а не из
+    # воздуха: 60 с по 5 с = 12.
+    segments = next(r for r in forecast["rows"] if r["stage"] == "segments")
+    assert segments["count"] == 12
+
+
+def test_forecast_scales_with_episodes_and_duration(root):
+    _retype(root, episode_duration_sec=60, episodes=1)
+    one = webapp.project_forecast(root / "pilot", KNOWLEDGE)["total"]
+
+    _retype(root, episode_duration_sec=120, episodes=2)
+    four = webapp.project_forecast(root / "pilot", KNOWLEDGE)["total"]
+
+    assert four == pytest.approx(one * 4)
+
+
+def test_forecast_in_stills_mode_counts_frames_not_segments(root):
+    """В режиме кадров отрезки не снимаются — и в прогнозе их быть не должно."""
+    _retype(root, genre="educational", visual_mode="stills",
+            episode_duration_sec=600)
+
+    forecast = webapp.project_forecast(root / "pilot", KNOWLEDGE)
+
+    stages = {row["stage"] for row in forecast["rows"]}
+    assert "segments" not in stages
+    assert "storyboard" in stages
+
+
+def test_forecast_names_its_assumptions(root):
+    """Прогноз — не замер: допущения, из которых он собран, названы вслух."""
+    forecast = webapp.project_forecast(root / "pilot", KNOWLEDGE)
+    assert forecast["assumptions"]
+
+
+def test_project_estimate_carries_the_forecast_for_unplanned_episodes(root):
+    """В диалоге автономного старта прогноз стоит на месте «неизвестно»."""
+    _retype(root, episodes=2)
+
+    est = webapp.project_estimate(root / "pilot", KNOWLEDGE)
+
+    assert est["forecast"]["total"] > 0
+    assert not any("станет известно" in p for p in est["problems"])
+
+
+# --- длительность серии правится из панели ---------------------------------
+
+def test_episode_duration_is_editable(root):
+    webapp.set_project_settings(root / "pilot",
+                                {"episode_duration_sec": 900}, KNOWLEDGE)
+
+    ep = webapp.project_overview(root / "pilot", KNOWLEDGE)["episodes"][0]
+    assert ep["duration"]["target_sec"] == 900
+
+
+def test_episode_duration_refuses_nonsense(root):
+    for bad in (0, -60, "полчаса", 99 * 3600):
+        with pytest.raises(webapp.WebappError):
+            webapp.set_project_settings(root / "pilot",
+                                        {"episode_duration_sec": bad}, KNOWLEDGE)
+
+
+def test_overview_carries_the_forecast_for_the_header(root):
+    """«Готовое видео обойдётся от ~$X» — строка шапки, а не только диалога."""
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+    assert data["forecast"]["total"] > 0
+
+
+def test_forecast_names_the_role_it_could_not_price(root):
+    """Ненастроенная роль — строка в problems, а не отказ во всём прогнозе.
+
+    Та же дисциплина, что в смете: человек видит и цену известного, и список
+    неизвестного.
+    """
+    data = webapp.project_forecast(root / "pilot", KNOWLEDGE)
+
+    # Озвучка в пилоте не сконфигурирована: роль tts не объявлена в брифе.
+    assert any("voice_lines" in p for p in data["problems"])
+    assert data["total"] > 0
+
+
+def test_estimate_shows_what_the_forecast_could_not_price(root):
+    """Непосчитанная озвучка не должна тихо выпасть из суммы перед стартом."""
+    _retype(root, episodes=2)
+
+    problems = webapp.project_estimate(root / "pilot", KNOWLEDGE)["problems"]
+
+    assert any(p.startswith("прогноз:") and "voice_lines" in p for p in problems)

@@ -207,6 +207,7 @@ function renderPipe() {
       <p>Следующий шаг: ${nextText}</p>
       <p class="muted sub-line">
         ${durationLine(ep)} ·
+        ${d.forecast ? `готовое видео от ~${money(d.forecast.total)} ·` : ""}
         отрезок ${esc(d.segment_seconds)} с ·
         кадр ${esc(d.models.image?.model || d.models.image)} ·
         видео ${esc(d.models.video?.model || d.models.video)}</p>
@@ -265,6 +266,15 @@ function renderPipe() {
         ? "смета всего остатка и одно подтверждение на старте; дальше шаги идут подряд, пока не кончится работа, не откажет стадия или не понадобится человек"
         : "по шагу за нажатие: перед платной стадией показывается смета"}</span>
     </div>
+
+    <label class="setting">
+      <span class="eyebrow">Длительность серии, мин</span>
+      <input class="field" id="episode-minutes" type="number" min="1" step="1"
+        value="${ep && ep.duration.target_sec
+          ? Math.round(ep.duration.target_sec / 60) : ""}">
+      <span class="hint-inline muted">цель из брифа; из неё считается прогноз
+        стоимости до раскадровки</span>
+    </label>
 
     <label class="setting">
       <span class="eyebrow">Длительность отрезка</span>
@@ -552,9 +562,24 @@ function confirmAutonomous() {
     }
     const rows = est.episodes.map((ep) => `<tr><td>${esc(ep.episode)}</td>
       <td class="muted">${esc(ep.rows.map((r) => r.stage).join(", ") || "—")}</td>
-      <td class="mono right">${money(ep.total)}</td></tr>`).join("");
+      <td class="mono right">${money(ep.total)}</td></tr>`).join("")
+      // Серии без плана съёмки: их цену называет прогноз по брифу. Отказ
+      // отвечать («станет известно после раскадровки») хуже честного «от».
+      + (est.forecast
+        ? `<tr><td>${esc(est.forecast.episodes_without_plan.join(", "))}</td>
+             <td class="muted">по брифу: ${esc(est.forecast.rows
+               .map((r) => `${r.stage} ×${r.count}`).join(", ") || "—")}</td>
+             <td class="mono right">от ~${money(est.forecast.total)}</td></tr>`
+        : "");
     const problems = est.problems.length
       ? `<p class="note err">${est.problems.map(esc).join("<br>")}</p>` : "";
+    // Прогноз — не замер, и допущения, из которых он собран, человек обязан
+    // видеть рядом с числом: иначе «от ~$12» читается как обещание.
+    const assumptions = est.forecast
+      ? `<p class="note">Прогноз по брифу считан так: ${
+          esc(est.forecast.assumptions.join("; "))}. Музыка, эффекты и фоли в
+         него не входят — их в плане может не быть вовсе.</p>`
+      : "";
     const budget = est.budget
       ? `<p class="note">Потолок ${money(est.budget.limit)}, потрачено
          ${money(est.budget.spent)}; после этой сметы останется
@@ -574,8 +599,9 @@ function confirmAutonomous() {
         <tbody>${rows || '<tr><td colspan="3" class="muted">платить пока не за что</td></tr>'}</tbody>
         <tfoot><tr><td>Итого</td><td class="muted">тексты платятся токенами движка
           и в сумму не входят</td>
-          <td class="mono right">${money(est.total)}</td></tr></tfoot>
-      </table></div>${problems}${budget}
+          <td class="mono right">${est.forecast ? "от ~" : ""}${
+            money(est.total + (est.forecast ? est.forecast.total : 0))}</td></tr></tfoot>
+      </table></div>${assumptions}${problems}${budget}
       <div class="actions">
         <button class="btn ghost" data-close id="auto-cancel">Отмена</button>
         <span class="spacer"></span>
@@ -1491,6 +1517,16 @@ async function showEstimate() {
 
 document.addEventListener("change", async (e) => {
   if (e.target.id === "language") await saveSettings({ language: e.target.value });
+  if (e.target.id === "episode-minutes") {
+    // Человек думает минутами, бриф хранит секунды. Перевод здесь — один, и
+    // сервер получает то же число, что записал бы мастер нового проекта.
+    const minutes = Number.parseInt(e.target.value, 10);
+    if (!Number.isFinite(minutes) || minutes < 1) {
+      toast("Длительность серии — целое число минут", true);
+      return;
+    }
+    await saveSettings({ episode_duration_sec: minutes * 60 });
+  }
   if (e.target.id === "budget-limit") {
     // Пустое поле — снять потолок; сервер откажет, если режим автономный.
     const raw = e.target.value.trim();
