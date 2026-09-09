@@ -219,16 +219,19 @@ def cmd_diff(project_dir: Path, rel: str) -> int:
 
 
 def cmd_budget(project_dir: Path, estimate: float) -> int:
-    """Влезает ли смета в остаток budget_usd. Только для autonomy: full — в
-    остальных режимах трату подтверждает человек, потолок не нужен."""
+    """Влезает ли смета в остаток budget_usd.
+
+    Потолок применяется ВЕЗДЕ, где задан, а не только при `autonomy: full`
+    (решение пользователя 2026-09-09): он затем и задан, а прежнее правило
+    молча не применяло его к тому, кто работает вручную. Не задан — ограничения
+    нет: трату подтверждает человек, а в автономном режиме — смета всего
+    прогона перед стартом.
+    """
     data = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
-    if data.get("autonomy") != "full":
-        print("режим не full — потолок бюджета не применяется")
-        return 0
     budget = data.get("budget_usd")
     if budget is None:
-        print("autonomy: full требует budget_usd в project.json")
-        return 1
+        print("потолок бюджета не задан (budget_usd) — ограничения нет")
+        return 0
     manifest_path = project_dir / "manifest.json"
     spent = Manifest(manifest_path).credits_total() if manifest_path.exists() else 0.0
     remainder = float(budget) - spent

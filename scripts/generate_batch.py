@@ -592,14 +592,18 @@ def _run_jobs(jobs: list[dict], manifest, provider, provider_name: str,
     models_used = ", ".join(sorted({j["model"] for j in todo}))
     print(f"СМЕТА: {len(todo)} генераций, ~{total:.4f} {provider.unit} "
           f"({args.stage}, провайдер {provider_name}, модели: {models_used}).")
-    # Потолок бюджета автономного режима (спека §7). Проверяет КОД, а не скилл:
-    # при autonomy: full запуск идёт с --yes, и любая пропущенная инструкция
-    # означала бы трату без потолка (находка финального ревью).
-    if project.raw.get("autonomy") == "full":
-        budget = project.raw.get("budget_usd")
-        if budget is None:
-            print("autonomy: full требует budget_usd в project.json")
-            return 1
+    # Потолок бюджета проверяет КОД, а не скилл: автономный запуск идёт с --yes,
+    # и любая пропущенная инструкция означала бы трату мимо потолка (находка
+    # финального ревью).
+    #
+    # Применяется он ВСЕГДА, когда задан, а не только при `autonomy: full`
+    # (решение пользователя 2026-09-09): человек, поставивший потолок и
+    # работающий вручную, раньше молча его не получал. Обязательным для
+    # автономного режима потолок быть перестал — тормозом там стала смета всего
+    # прогона с подтверждением перед стартом, а требование выдумать число
+    # только мешало включить режим.
+    budget = project.raw.get("budget_usd")
+    if budget is not None:
         remainder = float(budget) - manifest.credits_total()
         if total > remainder:
             print(f"БЮДЖЕТ ИСЧЕРПАН: смета {total:.4f} > остаток {remainder:.4f} "

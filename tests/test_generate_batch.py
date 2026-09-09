@@ -1296,3 +1296,35 @@ def test_failed_voice_process_keeps_paid_original(proj, monkeypatch):
     voice = proj / "episodes" / "ep01" / "audio" / "vl-01.mp3"
     assert voice.exists(), "оплаченный исходник уничтожен"
     assert not voice.with_name("vl-01-raw.mp3").exists(), "временный файл остался"
+
+
+def test_autonomous_run_without_a_ceiling_is_allowed(proj, monkeypatch, capsys):
+    """Потолок бюджета БОЛЬШЕ не обязателен автономному режиму (2026-09-09).
+
+    Тормозом стала смета с подтверждением перед стартом автономного прогона:
+    человек видит сумму заранее и решает один раз. Требование `budget_usd`
+    только мешало — включить режим было нельзя, пока не выдумаешь число.
+    """
+    fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["autonomy"] = "full"
+    pj.pop("budget_usd", None)
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+
+    assert run(proj, "storyboard") == 0
+    assert "budget_usd" not in capsys.readouterr().out
+
+
+def test_ceiling_holds_in_manual_mode_too(proj, monkeypatch, capsys):
+    """Заданный потолок работает всегда: он затем и задан.
+
+    Раньше он применялся только при `autonomy: full`, то есть человек,
+    поставивший потолок и работающий вручную, его молча не получал.
+    """
+    fake_provider(monkeypatch)
+    pj = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    pj["budget_usd"] = 0.0001
+    (proj / "project.json").write_text(json.dumps(pj), encoding="utf-8")
+
+    assert run(proj, "storyboard") == 3
+    assert "БЮДЖЕТ ИСЧЕРПАН" in capsys.readouterr().out

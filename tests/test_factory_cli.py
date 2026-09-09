@@ -381,7 +381,12 @@ def test_budget_ceiling_prints_four_decimals(proj, capsys):
     assert "потолок $0.0020" in capsys.readouterr().out
 
 
-def test_budget_requires_budget_usd_in_full_mode(proj, capsys):
+def test_budget_without_a_ceiling_is_not_a_refusal(proj, capsys):
+    """Потолок перестал быть обязательным автономному режиму (2026-09-09).
+
+    Тормозом стала смета всего прогона с подтверждением перед стартом, а
+    требование выдумать число мешало включить режим вовсе.
+    """
     (proj / "project.json").write_text(json.dumps({
         "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
         "episodes": 1, "episode_duration_sec": 10, "autonomy": "full",
@@ -389,8 +394,21 @@ def test_budget_requires_budget_usd_in_full_mode(proj, capsys):
                    "video": {"model": "seedance_2_0", "provider": "wavespeed",
                              "tier": "fast"}},
     }), encoding="utf-8")
-    assert run("budget", "--project", proj, "--estimate", "0.1") == 1
-    assert "budget_usd" in capsys.readouterr().out
+    assert run("budget", "--project", proj, "--estimate", "0.1") == 0
+    assert "не задан" in capsys.readouterr().out
+
+
+def test_budget_ceiling_applies_in_manual_mode_too(proj, capsys):
+    """Заданный потолок работает всегда: он затем и задан."""
+    (proj / "project.json").write_text(json.dumps({
+        "name": "pilot", "type": "animated_series", "theme": "t", "audience": "6-9",
+        "episodes": 1, "episode_duration_sec": 10, "budget_usd": 1,
+        "models": {"image": {"model": "z_image", "provider": "wavespeed"},
+                   "video": {"model": "seedance_2_0", "provider": "wavespeed",
+                             "tier": "fast"}},
+    }), encoding="utf-8")
+    assert run("budget", "--project", proj, "--estimate", "3.0") == 3
+    assert "БЮДЖЕТ ИСЧЕРПАН" in capsys.readouterr().out
 
 
 def test_effective_feedback_reports_pending_after_human_edit(proj, monkeypatch):

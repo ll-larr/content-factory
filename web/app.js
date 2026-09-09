@@ -262,7 +262,7 @@ function renderPipe() {
         <button data-autonomy="full" aria-pressed="${auto}">Автономно</button>
       </div>
       <span class="hint-inline muted">${auto
-        ? "шаги идут подряд без подтверждений; останавливает потолок бюджета, отказ стадии или ожидание человека"
+        ? "смета всего остатка и одно подтверждение на старте; дальше шаги идут подряд, пока не кончится работа, не откажет стадия или не понадобится человек"
         : "по шагу за нажатие: перед платной стадией показывается смета"}</span>
     </div>
 
@@ -283,9 +283,8 @@ function renderPipe() {
       <span class="eyebrow">Потолок бюджета, $</span>
       <input class="field" id="budget-limit" type="number" min="0" step="1"
         placeholder="нет" value="${d.budget.limit === null ? "" : esc(d.budget.limit)}">
-      <span class="hint-inline muted">${auto
-        ? "в автономном режиме это единственный тормоз: снять его можно только вручную"
-        : "потрачено " + money(d.budget.spent) + "; автономный режим без потолка не включится"}</span>
+      <span class="hint-inline muted">потрачено ${money(d.budget.spent)}; не
+        задан — ограничения нет, задан — стадия за него не вылезет</span>
     </label>
 
     <div class="setting">
@@ -533,6 +532,67 @@ async function pollTask() {
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+/* Подтверждение автономного прогона: смета остатка ПО ВСЕМУ проекту и один
+   вопрос. Дальше режим не спрашивает ничего — ни сметы по шагам, ни одобрений,
+   — поэтому единственное честное место для вопроса здесь.
+
+   Ответ ждём обещанием: диалог живёт до нажатия, а решение человека нужно
+   раньше, чем уйдёт первый платный запрос. */
+function confirmAutonomous() {
+  return new Promise(async (resolve) => {
+    let est;
+    try {
+      est = await api(`/api/estimate?project=${encodeURIComponent(state.project)}`);
+    } catch (e) {
+      toast("смету не посчитать: " + e.message, true);
+      resolve(false);
+      return;
+    }
+    const rows = est.episodes.map((ep) => `<tr><td>${esc(ep.episode)}</td>
+      <td class="muted">${esc(ep.rows.map((r) => r.stage).join(", ") || "—")}</td>
+      <td class="mono right">${money(ep.total)}</td></tr>`).join("");
+    const problems = est.problems.length
+      ? `<p class="note err">${est.problems.map(esc).join("<br>")}</p>` : "";
+    const budget = est.budget
+      ? `<p class="note">Потолок ${money(est.budget.limit)}, потрачено
+         ${money(est.budget.spent)}; после этой сметы останется
+         ${money(est.budget.left - est.total)}. Стадия, вылезающая за потолок,
+         остановится сама.</p>`
+      : `<p class="note">Потолок бюджета не задан — режим остановится только
+         сам: когда работы кончатся, стадия откажет или понадобится человек.</p>`;
+
+    openDialog(`<h3>Запустить конвейер автономно?</h3>
+      <p class="lead">Шаги пойдут подряд без подтверждений: панель будет
+        одобрять чекпоинты сама (в файле останется <span class="mono">approved_by:
+        auto</span>) и запускать платные стадии без сметы по каждой. Ниже —
+        остаток работ по всем сериям на сейчас; по ходу он может вырасти:
+        раскадровка следующих серий ещё не написана.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>серия</th><th>стадии</th><th class="right">сумма</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3" class="muted">платить пока не за что</td></tr>'}</tbody>
+        <tfoot><tr><td>Итого</td><td class="muted">тексты платятся токенами движка
+          и в сумму не входят</td>
+          <td class="mono right">${money(est.total)}</td></tr></tfoot>
+      </table></div>${problems}${budget}
+      <div class="actions">
+        <button class="btn ghost" data-close id="auto-cancel">Отмена</button>
+        <span class="spacer"></span>
+        <button class="btn primary" id="auto-confirm">Запустить автономно</button>
+      </div>`);
+
+    const done = (answer) => { closeDialog(); resolve(answer); };
+    $("#auto-confirm").addEventListener("click", () => done(true));
+    $("#auto-cancel").addEventListener("click", () => done(false));
+    // Крестик и Escape — тоже ответ «нет»: обещание не должно висеть вечно.
+    veil.addEventListener("click", function once(e) {
+      if (e.target === veil || e.target.closest("[data-close]")) {
+        veil.removeEventListener("click", once);
+        resolve(false);
+      }
+    });
+  });
 }
 
 /* Одобрить всё, что ждёт человека, — только в автономном режиме и только
@@ -1308,6 +1368,9 @@ document.addEventListener("click", async (e) => {
     // выбрал его тумблером, а тратами там правит потолок бюджета. В ручном
     // режиме смета показывается, как и раньше.
     const auto = state.data?.autonomy === "full";
+    // Автономный прогон спрашивает человека ОДИН раз — здесь, показав смету
+    // всего остатка. Дальше он не спрашивает вовсе: в этом и смысл режима.
+    if (auto && !(await confirmAutonomous())) return;
     // Первый шаг автономного прогона может упираться в неодобренный артефакт:
     // резолвер молчит, пока его ждут. Одобряем сами — тем же способом, что и
     // между шагами, — и только потом смотрим, что дальше.

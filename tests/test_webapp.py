@@ -581,15 +581,17 @@ def test_overview_reports_autonomy_manual_by_default(root):
     assert data["autonomy"] == "checkpoints"
 
 
-def test_autonomy_full_requires_a_budget_ceiling(root):
-    """Автономный режим тратит без подтверждения каждого шага.
+def test_autonomy_full_does_not_demand_a_budget_ceiling(root):
+    """Потолок автономному режиму не обязателен (решение 2026-09-09).
 
-    Потолок держит код (`generate_batch` при autonomy: full), поэтому без
-    `budget_usd` включать режим нельзя — иначе некому остановить съёмку.
+    Тормоз там другой: смета всего остатка, показанная перед стартом, и одно
+    подтверждение человека. Требование выдумать число мешало включить режим.
     """
     _retype(root, budget_usd=None)
-    with pytest.raises(webapp.WebappError, match="budget_usd"):
-        webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
+
+    webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
+
+    assert webapp.project_overview(root / "pilot", KNOWLEDGE)["autonomy"] == "full"
 
 
 def test_autonomy_switches_both_ways(root):
@@ -738,13 +740,54 @@ def test_budget_ceiling_is_set_from_the_panel(root):
                                         KNOWLEDGE)
 
 
-def test_budget_cannot_be_removed_under_autonomous_mode(root):
-    """Снять потолок при автономном режиме — значит снять единственный тормоз."""
+def test_budget_can_be_removed_in_any_mode(root):
+    """Потолок — не условие режима, а необязательное ограничение сверху."""
     webapp.set_project_settings(root / "pilot", {"autonomy": "full"}, KNOWLEDGE)
 
-    with pytest.raises(webapp.WebappError, match="автономн"):
-        webapp.set_project_settings(root / "pilot", {"budget_usd": None}, KNOWLEDGE)
-
-    webapp.set_project_settings(root / "pilot", {"autonomy": "checkpoints"}, KNOWLEDGE)
     webapp.set_project_settings(root / "pilot", {"budget_usd": None}, KNOWLEDGE)
+
     assert webapp.project_overview(root / "pilot", KNOWLEDGE)["budget"]["limit"] is None
+
+
+# --- смета всего прогона (перед стартом автономного режима) ----------------
+
+def test_project_estimate_sums_every_episode(root):
+    """Автономный прогон идёт по всем сериям, значит и смета — по всем."""
+    est = webapp.project_estimate(root / "pilot", KNOWLEDGE)
+
+    assert [e["episode"] for e in est["episodes"]] == ["ep01"]
+    assert est["total"] == pytest.approx(sum(e["total"] for e in est["episodes"]))
+    assert est["total"] > 0
+
+
+def test_project_estimate_survives_an_episode_without_a_plan(root):
+    """Серия без раскадровки — не повод не показать смету по остальным."""
+    _retype(root, episodes=2)
+
+    est = webapp.project_estimate(root / "pilot", KNOWLEDGE)
+
+    assert [e["episode"] for e in est["episodes"]] == ["ep01"]
+    assert any("ep02" in p for p in est["problems"])
+
+
+def test_project_estimate_reports_the_ceiling_when_it_is_set(root):
+    est = webapp.project_estimate(root / "pilot", KNOWLEDGE)
+    assert est["budget"]["limit"] == 20.0
+
+    webapp.set_project_settings(root / "pilot", {"budget_usd": None}, KNOWLEDGE)
+    assert webapp.project_estimate(root / "pilot", KNOWLEDGE)["budget"] is None
+
+
+def test_missing_shot_plan_reads_as_unwritten_work_not_as_a_failure(root):
+    """«Раскадровки ещё нет» — это состояние конвейера, а не поломка.
+
+    Перед стартом автономного прогона человек видит смету; строка с
+    `[Errno 2] No such file or directory` читается там как сбой панели, хотя
+    означает всего лишь, что план съёмки этой серии ещё предстоит написать.
+    """
+    _retype(root, episodes=2)
+
+    problems = webapp.project_estimate(root / "pilot", KNOWLEDGE)["problems"]
+
+    assert any("ep02" in p and "не написан" in p for p in problems)
+    assert not any("Errno" in p for p in problems)

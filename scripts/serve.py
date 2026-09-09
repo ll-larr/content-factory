@@ -127,6 +127,11 @@ class Handler(BaseHTTPRequestHandler):
                 q = parse_qs(url.query)
                 name = (q.get("project") or [""])[0]
                 episode = (q.get("episode") or [""])[0]
+                # Без серии — смета всего остатка проекта: её показывают перед
+                # стартом автономного прогона, который идёт по всем сериям.
+                if not episode:
+                    return self._json(webapp.project_estimate(
+                        self._project_dir(name)))
                 return self._json(webapp.episode_estimate(
                     self._project_dir(name), episode))
             if path.startswith("/media/"):

@@ -422,6 +422,58 @@ def episode_estimate(project_dir: Path, episode: str,
         raise WebappError(str(e)) from None
 
 
+def project_estimate(project_dir: Path,
+                     knowledge_dir: Path | str = Path("knowledge")) -> dict:
+    """Смета остатка по ВСЕМУ проекту — то, что человек видит перед стартом
+    автономного прогона.
+
+    Считает та же функция, что и посерийную смету: складываем её результаты, а
+    не заводим второй расчёт (правило `factory/estimate.py`). Серия, по которой
+    смету не посчитать (нет плана съёмки — его ещё напишет текстовая половина),
+    не роняет ответ: она уходит строкой в `problems`, потому что «сметы нет»
+    здесь означает «работа ещё не описана», а не «работы нет».
+
+    Текстовые стадии в сумму не входят и никогда не входили: они платятся
+    токенами движка, а не счётом провайдера. Смешивать две валюты в одной сумме
+    хуже, чем честно сказать про это в панели.
+    """
+    project_dir = Path(project_dir)
+    episodes: list[dict] = []
+    problems: list[str] = []
+    total = 0.0
+    for ep in episode_ids(project_dir):
+        if not (project_dir / "episodes" / ep / "shots.json").exists():
+            # Ненаписанная раскадровка — состояние конвейера, а не сбой.
+            # Пробрасывать сюда `[Errno 2] No such file or directory` значит
+            # показать человеку перед стартом строку, которая читается как
+            # поломка панели.
+            problems.append(
+                f"{ep}: план съёмки ещё не написан — сколько будет стоить, "
+                "станет известно после раскадровки")
+            continue
+        try:
+            one = estimate.episode_estimate(project_dir, ep, knowledge_dir)
+        except estimate.EstimateError as e:
+            problems.append(f"{ep}: {e}")
+            continue
+        episodes.append({"episode": ep, "rows": one["rows"],
+                         "total": one["total"]})
+        problems += [f"{ep}: {p}" for p in one["problems"]]
+        total += one["total"]
+
+    budget = None
+    try:
+        limit = load_project(project_dir / "project.json").raw.get("budget_usd")
+    except (ProjectError, OSError, ValueError):
+        limit = None
+    if limit is not None:
+        spent = Manifest(project_dir / "manifest.json").credits_total()
+        budget = {"limit": float(limit), "spent": spent,
+                  "left": float(limit) - spent}
+    return {"episodes": episodes, "total": total, "problems": problems,
+            "budget": budget}
+
+
 def keys_state(root: Path | str = Path(".")) -> list[dict]:
     """Состояние ключей: маски и роли, без значений."""
     return keys.read_state(root)
@@ -555,15 +607,10 @@ def set_project_settings(project_dir: Path, changes: dict,
         if mode not in AUTONOMY_MODES:
             raise WebappError(
                 f"неизвестный режим {mode!r}; известны: {list(AUTONOMY_MODES)}")
-        # Автономный режим не спрашивает подтверждения перед каждой тратой,
-        # поэтому останавливает съёмку только потолок бюджета — тот самый, что
-        # проверяет `generate_batch` при `autonomy: full`. Без него включать
-        # режим нельзя: остановить конвейер будет некому.
-        if mode == "full" and data.get("budget_usd") is None:
-            raise WebappError(
-                "автономный режим тратит без подтверждения каждого шага, "
-                "поэтому требует budget_usd в project.json — иначе съёмку "
-                "нечем остановить")
+        # Потолка автономный режим НЕ требует (решение пользователя
+        # 2026-09-09): человек подтверждает прогон один раз, увидев смету всего
+        # остатка (`project_estimate`). Заданный потолок при этом работает —
+        # его проверяет `generate_batch` перед каждой тратой.
         data["autonomy"] = mode
 
     if "segment_seconds" in changes:
@@ -573,12 +620,6 @@ def set_project_settings(project_dir: Path, changes: dict,
     if "budget_usd" in changes:
         limit = changes["budget_usd"]
         if limit is None or limit == "":
-            # Снять потолок можно, но не под автономным режимом: там он
-            # единственное, что останавливает съёмку.
-            if data.get("autonomy") == "full":
-                raise WebappError(
-                    "потолок снимается только в ручном режиме: автономный "
-                    "тратит без подтверждений, и остановить его больше нечем")
             data.pop("budget_usd", None)
         else:
             if isinstance(limit, bool) or not isinstance(limit, (int, float)):
