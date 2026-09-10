@@ -347,6 +347,43 @@ def review_action(project_dir: Path, item_id: str, action: str,
     return manifest.get(item_id)
 
 
+def review_all(project_dir: Path, episode: str, action: str,
+               reason: str | None = None) -> dict:
+    """Провести через приёмку ВСЁ, что ждёт человека в этой серии.
+
+    Семьдесят кадров по одному — это не приёмка, а работа кликами: человек
+    смотрит их полосой и решает про полосу. Причина у отклонения обязательна и
+    в массовом виде — она уходит в манифест каждой единицы и потом объясняет,
+    почему ряд переснимали.
+
+    Серия названа явно: чужая серия не должна уехать заодно, а «всё» на экране
+    одной серии значит «всё здесь».
+    """
+    if action not in REVIEW_ACTIONS:
+        raise WebappError(
+            f"неизвестное действие {action!r}; известны {sorted(REVIEW_ACTIONS)}")
+    if action == "reject" and not (reason or "").strip():
+        raise WebappError("отклонение требует причину — одну на весь ряд")
+
+    project_dir = Path(project_dir)
+    manifest = Manifest(project_dir / "manifest.json")
+    waiting = [item_id for item_id, item in sorted(manifest.data.get("items", {}).items())
+               if item.get("status") == AWAITING_REVIEW
+               and item_id.startswith(f"{episode}/")]
+
+    fields = {"reject_reason": reason.strip()} if action == "reject" else {}
+    done: list[str] = []
+    for item_id in waiting:
+        try:
+            manifest.set_status(item_id, REVIEW_ACTIONS[action], **fields)
+        except ManifestError:
+            continue
+        done.append(item_id)
+    if done:
+        manifest.save()
+    return {"count": len(done), "items": done, "action": action}
+
+
 def approve_artifact(project_dir: Path, rel: str, *, auto: bool = False) -> dict:
     """Одобрить текстовый артефакт — тем же кодом, что и CLI.
 

@@ -352,9 +352,19 @@ function renderPipe() {
     : "";
 
   const queue = waiting.length + texts.length;
+  // Кнопки на весь ряд: семьдесят кадров по одному — это не решение, а работа
+  // кликами. Отклонение спрашивает причину, одну на весь ряд.
+  const bulk = queue
+    ? `<span class="bulk">
+        <button class="btn sm" id="accept-all">Принять всё (${queue})</button>
+        ${waiting.length
+          ? `<button class="btn sm ghost danger" id="reject-all"
+               >Отклонить кадры (${waiting.length})</button>` : ""}
+      </span>`
+    : "";
   $("#tab-pipe").innerHTML = head + stages + taskBox + factCheckBlock(ep) +
     `<h2 class="sec">Ждёт приёмки <span class="hint">${queue
-      ? "кадры открываются крупно, тексты — по ссылке" : "пусто"}</span></h2>` + review +
+      ? "кадры открываются крупно, тексты — по ссылке" : "пусто"}</span>${bulk}</h2>` + review +
     `<h2 class="sec">Тексты <span class="hint">status ставит только approve</span></h2>` + arts +
     finals;
 
@@ -529,6 +539,15 @@ async function pollTask() {
       toast(task.status === "done"
         ? `Стадия ${task.stage} завершена`
         : `Стадия ${task.stage}: ${task.status}, код ${task.exit_code}`,
+        task.status !== "done");
+      const draft = task.episode
+        ? `episodes/${task.episode}/.last-answer.md` : ".last-answer.md";
+      say(task.status === "done"
+        ? `Готово: <b>${esc(task.stage)}</b>. <button class="linkish"
+             data-artifact="${esc(draft)}">показать ответ целиком</button>`
+        : `Стадия <b>${esc(task.stage)}</b>: ${esc(task.status)}, код ${
+             task.exit_code}. <button class="linkish"
+             data-artifact="${esc(draft)}">показать ответ целиком</button>`,
         task.status !== "done");
     }
   } catch (e) {
@@ -796,7 +815,20 @@ async function loadText() {
 
 // `episode` передаётся явно там, где стадия его не имеет: у исследования и
 // библии серии нет, и подпись «серия ep01» в журнале была бы выдумкой.
+/* Что стало с последним запросом из строки промпта. Тост живёт секунды и
+   исчезает — человек, отошедший от экрана, не узнавал ни об отказе («идёт
+   другая стадия»), ни о том, что стадию не удалось угадать по тексту, и видел
+   ровно ничего. Эта строка остаётся, пока не появится следующий ответ. */
+function say(html, bad = false) {
+  const box = $("#composer-say");
+  if (!box) return;
+  box.innerHTML = html;
+  box.classList.toggle("err", bad);
+  box.hidden = false;
+}
+
 async function runTextStage(stageId, request, episode = state.episode) {
+  say(`Запускаю <b>${esc(stageId)}</b>${episode ? " · " + esc(episode) : ""}…`);
   try {
     const { task } = await post("/api/text", {
       project: state.project, episode, stage: stageId,
@@ -809,8 +841,14 @@ async function runTextStage(stageId, request, episode = state.episode) {
     renderTask();
     clearTimeout(state.poll);
     state.poll = setTimeout(pollTask, 700);
-    toast(`Пишу: ${stageId}`);
-  } catch (e) { toast(e.message, true); }
+    say(`Идёт <b>${esc(stageId)}</b>${episode ? " · " + esc(episode) : ""} — ход видно в журнале ниже`);
+    // Журнал живёт на вкладке конвейера: запуск из другой вкладки иначе
+    // выглядел бы как «ничего не произошло».
+    document.querySelector("#task-box")?.scrollIntoView({block: "nearest"});
+  } catch (e) {
+    say(`Не запустилось: ${esc(e.message)}`, true);
+    toast(e.message, true);
+  }
 }
 
 // Что человек имел в виду: стадия из текста запроса, иначе спросим кнопкой.
@@ -1374,7 +1412,9 @@ document.addEventListener("click", async (e) => {
     if (!text) { toast("Скажи, что делать", true); return; }
     const stage = guessStage(text);
     if (!stage) {
-      toast("Не понял, какая стадия. Нажми нужную кнопку рядом с полем.", true);
+      say("Не понял, какая стадия. Нажми нужную кнопку рядом с полем — "
+          + "запрос останется в поле.", true);
+      toast("Не понял, какая стадия", true);
       return;
     }
     await runTextStage(stage, text);
@@ -1442,6 +1482,9 @@ document.addEventListener("click", async (e) => {
       <div class="frame"><img src="${zoom.getAttribute("src")}" alt=""></div>`, true);
     return;
   }
+
+  if (e.target.closest("#accept-all")) { await acceptAll(); return; }
+  if (e.target.closest("#reject-all")) { await rejectAll(); return; }
 
   const review = e.target.closest("[data-review]");
   if (review) { await doReview(review.dataset.review, review.dataset.item); return; }
@@ -1516,6 +1559,45 @@ async function saveSettings(changes) {
     // конвейер идёт по плану. Промолчать значит дать человеку решить, что
     // отрезки сниматься не будут, — и всё равно списать за них деньги.
     (saved.warnings || []).forEach((w) => toast(w, true));
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Принять всё, что ждёт человека в этой серии: и снятые кадры, и написанные
+   тексты. Медиа уходит одним запросом (их бывают десятки), тексты — по одному:
+   их единицы, а общего «одобрить всё» на стороне сервера нет и заводить его
+   ради трёх файлов незачем. */
+async function acceptAll() {
+  const ep = currentEpisode();
+  const texts = state.data?.awaiting_text || [];
+  const media = ep ? ep.items.filter((i) => i.status === "generated").length : 0;
+  if (!confirm(`Принять всё: кадров и дорожек ${media}, текстов ${texts.length}?`)) return;
+  try {
+    if (media) {
+      const r = await post("/api/review-all", {
+        project: state.project, episode: ep.id, action: "accept" });
+      toast(`Принято генераций: ${r.count}`);
+    }
+    for (const art of texts) {
+      await post("/api/approve", { project: state.project, path: art.path });
+    }
+    if (texts.length) toast(`Одобрено текстов: ${texts.length}`);
+    await loadProject();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Отклонить весь ряд кадров одной причиной. Тексты сюда не входят: отклонения
+   у артефакта нет вовсе — его либо одобряют, либо переписывают стадией. */
+async function rejectAll() {
+  const ep = currentEpisode();
+  if (!ep) return;
+  const reason = prompt("Причина отклонения — одна на весь ряд:");
+  if (!reason || !reason.trim()) return;
+  try {
+    const r = await post("/api/review-all", {
+      project: state.project, episode: ep.id, action: "reject",
+      reason: reason.trim() });
+    toast(`Отклонено: ${r.count}`);
+    await loadProject();
   } catch (e) { toast(e.message, true); }
 }
 

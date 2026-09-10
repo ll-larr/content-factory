@@ -277,6 +277,16 @@ tfoot td { border-top:1px solid var(--line); font-weight:700; }
 .composer textarea { width:100%; background:transparent; border:0; resize:none;
   font-size:14.5px; padding:2px 2px 6px; min-height:44px; line-height:1.4; color:inherit; }
 .composer textarea:focus { outline:none; }
+/* Что стало с последним запросом. Строка ПОСТОЯННАЯ: тост живёт секунды, и
+   человек, отошедший от экрана, не узнавал ни об отказе, ни о том, что стадия
+   вообще не началась. */
+.say { font-size:12.5px; padding:6px 8px; margin:0 0 6px; border-radius:6px;
+  background:var(--panel-2); border:1px solid var(--line); color:var(--text-2); }
+.say.err { border-color:var(--crit); color:var(--crit); }
+.say b { color:var(--text); font-weight:600; }
+.say button { margin-left:8px; }
+.bulk { float:right; display:inline-flex; gap:6px; }
+
 .crow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .crow .spacer { flex:1 0 8px; }
 .slash { display:flex; gap:6px; flex-wrap:wrap; }

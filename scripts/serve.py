@@ -167,6 +167,13 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("item", ""), payload.get("action", ""),
                     payload.get("reason"))
                 return self._json({"item": item})
+            if url.path == "/api/review-all":
+                # Массовая приёмка серии: семьдесят кадров по одному — это не
+                # решение, а работа кликами.
+                return self._json(webapp.review_all(
+                    self._project_dir(payload.get("project", "")),
+                    payload.get("episode", ""), payload.get("action", ""),
+                    payload.get("reason")))
             if url.path == "/api/approve":
                 # `auto` ставит автономный режим панели: по файлу должно быть
                 # видно, что чекпоинт не смотрел человек (спека §7).

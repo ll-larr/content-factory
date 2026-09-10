@@ -949,3 +949,59 @@ def test_overview_shows_the_text_choice(root):
 
     assert data["text"]["model"] == "sonnet"
     assert data["text"]["effort"] == "low"
+
+
+# --- массовая приёмка (2026-09-10) -----------------------------------------
+
+def _generated(root, *ids):
+    from factory.manifest import Manifest
+    manifest = Manifest(root / "pilot" / "manifest.json")
+    for item_id in ids:
+        manifest.add(item_id, kind="frame")
+        manifest.set_status(item_id, "generating")
+        manifest.set_status(item_id, "generated")
+    manifest.save()
+
+
+def test_accept_all_takes_everything_waiting(root):
+    """Семьдесят кадров по одному — это не приёмка, а работа кликами."""
+    _generated(root, "ep01/storyboard/001", "ep01/storyboard/002")
+
+    result = webapp.review_all(root / "pilot", "ep01", "accept")
+
+    assert result["count"] == 2
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+    assert data["episodes"][0]["awaiting"] == 0
+
+
+def test_reject_all_demands_one_reason_for_all(root):
+    """Отклонение без причины бесполезно и в массовом виде тоже."""
+    _generated(root, "ep01/storyboard/001")
+
+    with pytest.raises(webapp.WebappError, match="причин"):
+        webapp.review_all(root / "pilot", "ep01", "reject")
+
+    result = webapp.review_all(root / "pilot", "ep01", "reject",
+                               reason="весь ряд не в стиле")
+    assert result["count"] == 1
+
+    from factory.manifest import Manifest
+    item = Manifest(root / "pilot" / "manifest.json").get("ep01/storyboard/001")
+    assert item["status"] == "rejected"
+    assert item["reject_reason"] == "весь ряд не в стиле"
+
+
+def test_review_all_touches_only_this_episode(root):
+    """Чужая серия не должна уехать в приёмку заодно."""
+    _retype(root, episodes=2)
+    _generated(root, "ep01/storyboard/001", "ep02/storyboard/001")
+
+    webapp.review_all(root / "pilot", "ep01", "accept")
+
+    from factory.manifest import Manifest
+    other = Manifest(root / "pilot" / "manifest.json").get("ep02/storyboard/001")
+    assert other["status"] == "generated", "вторая серия не тронута"
+
+
+def test_review_all_on_empty_queue_is_not_an_error(root):
+    assert webapp.review_all(root / "pilot", "ep01", "accept")["count"] == 0
