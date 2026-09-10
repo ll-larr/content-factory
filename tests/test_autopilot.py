@@ -203,3 +203,21 @@ def test_kick_refuses_in_manual_mode(root):
 
     with pytest.raises(webapp.WebappError, match="ручн"):
         autopilot.kick(FakeRunner(), root, "pilot", repo_root=REPO_ROOT)
+
+
+def test_text_storyboard_is_not_mistaken_for_the_paid_one(root, monkeypatch):
+    """Платная стадия и текстовая делят имя запуска — различает их РЕЗОЛВЕР.
+
+    Живой прогон 2026-09-10: водитель решал по имени запуска, увидел
+    `storyboard` в списке платных и вместо написания shots.json запустил съёмку
+    кадров — та вышла кодом 2, не найдя плана, которого ещё нет.
+    """
+    runner = FakeRunner()
+    monkeypatch.setattr(autopilot, "next_stage", lambda pdir: ("storyboard", "ep01"))
+
+    autopilot.step(runner, root, done_task(stage="factcheck"), repo_root=REPO_ROOT)
+
+    assert runner.started, "стадия не запущена"
+    started = runner.started[0]
+    assert started["meta"]["kind"] == "text", started["meta"]
+    assert "text_stage.py" in " ".join(started["cmd"])

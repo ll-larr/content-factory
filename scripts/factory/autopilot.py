@@ -21,11 +21,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from factory.manifest import Manifest, ManifestError
-from factory.preprod import cli_stage, next_stage
+from factory.preprod import PAID_STAGES, cli_stage, next_stage
 from factory.project import ProjectError, load_project
-from factory.webapp import (AWAITING_REVIEW, PAID_RUNNABLE, WebappError,
-                            approve_artifact, project_overview, run_stage,
-                            run_text_task)
+from factory.webapp import (AWAITING_REVIEW, WebappError, approve_artifact,
+                            project_overview, run_stage, run_text_task)
 
 AUTONOMOUS = "full"
 
@@ -70,8 +69,14 @@ def step(runner, projects_root: Path | str, task: dict, *,
         return None
 
     stage, episode = nxt
+    # Платная стадия или текстовая — решает ИМЯ РЕЗОЛВЕРА, а не имя запуска:
+    # текстовый `storyboard` (пишет shots.json) и платная съёмка кадров
+    # запускаются одинаково, но резолвер зовёт вторую `storyboard_generate`.
+    # Тот же список, по которому делит панель (`webapp._next_step`), — второй
+    # ответ на этот вопрос уже стоил живого прогона 2026-09-10: водитель
+    # запустил съёмку вместо раскадровки, и та вышла кодом 2, не найдя плана.
+    paid = stage in PAID_STAGES
     runnable = cli_stage(stage)
-    paid = runnable in PAID_RUNNABLE or runnable == "render"
     # Сравниваем не только имя: у текстовой стадии `storyboard` (пишет
     # shots.json) и у платной генерации кадров одно имя запуска, и без вида
     # задачи режим считал бы вторую повтором первой и вставал ровно там, где
