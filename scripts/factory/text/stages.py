@@ -80,7 +80,11 @@ STAGES: dict[str, Stage] = {
     "factcheck": Stage(
         id="factcheck", label="Проверка фактов", skill="factory-factcheck",
         inputs=("episodes/{ep}/script.md",),
-        outputs=("episodes/{ep}/script.md", "episodes/{ep}/fact-check.md"),
+        # Сценарий проверяющий БОЛЬШЕ НЕ ПИШЕТ файлом: правки едут парами
+        # «было → стало» и применяются кодом (`factcheck.apply_fixes`).
+        # Переписанный целиком сценарий не помещался в один ответ вместе с
+        # отчётом — живой прогон 2026-09-10 вернул обрывок с середины.
+        outputs=("episodes/{ep}/fact-check.md",),
         pipeline_stage="script", requires_fact_check=True),
     "characters": Stage(
         id="characters", label="Персонажи", skill="factory-characters",

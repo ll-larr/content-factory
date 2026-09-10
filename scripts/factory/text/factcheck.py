@@ -51,6 +51,17 @@ _FIELD = re.compile(r"^\s*(утверждение|запрос)\s*:\s*(?P<value>
 _VERDICT = re.compile(r"===\s*VERDICT:\s*(?P<value>passed|failed)\s*===",
                       re.IGNORECASE)
 
+# Правка сценария — ПАРА «было → стало», а не переписанный целиком сценарий
+# (решение 2026-09-10, живой прогон). Сценарий получасовой серии — 68 КБ; вместе
+# с отчётом он не помещается в один ответ модели, и проверка вернула обрывок с
+# середины, без вердикта: стадия падала не на фактах, а на длине.
+_FIX_BLOCK = re.compile(
+    r"===\s*FIX\s*===\s*(?P<body>.*?)\s*===\s*END FIX\s*===",
+    re.DOTALL | re.IGNORECASE)
+_FIX_HALVES = re.compile(
+    r"---\s*было\s*---\s*(?P<old>.*?)\s*---\s*стало\s*---\s*(?P<new>.*)",
+    re.DOTALL | re.IGNORECASE)
+
 VERDICTS = ("passed", "failed")
 
 
@@ -247,6 +258,71 @@ def parse_verdict(answer: str) -> str:
             "в ответе нет строки '=== VERDICT: passed ===' или "
             "'=== VERDICT: failed ==='; " + _tail(answer))
     return match.group("value").lower()
+
+
+# --- правки сценария ------------------------------------------------------
+
+@dataclass
+class Fix:
+    """Одна точечная правка сценария: что было и чем это заменить."""
+    old: str
+    new: str
+
+
+def parse_fixes(answer: str) -> list[Fix]:
+    """Правки из ответа проверяющего. Пустой список — правок не понадобилось.
+
+    Блок без одной из половин — ошибка формата: применить нечего, а пропустить
+    молча значит выдать неисправленный факт за исправленный.
+    """
+    fixes: list[Fix] = []
+    for block in _FIX_BLOCK.finditer(answer or ""):
+        halves = _FIX_HALVES.search(block.group("body"))
+        if not halves:
+            raise FactCheckError(
+                "в блоке FIX нет половин '--- было ---' и '--- стало ---': "
+                + block.group("body").strip()[:TAIL_CHARS])
+        fixes.append(Fix(old=halves.group("old"), new=halves.group("new")))
+    return fixes
+
+
+def apply_fixes(project_dir: Path | str, episode: str,
+                fixes: list[Fix]) -> int:
+    """Применить правки к сценарию. Возвращает число применённых.
+
+    Замена ТОЧНАЯ и однозначная: фрагмент обязан встречаться в сценарии ровно
+    один раз. Не найден — отказ с самим фрагментом (гадать, что имелось в виду,
+    значит править не то); найден дважды — тоже отказ: какой из двух правят,
+    неизвестно, а «первый попавшийся» однажды испортит соседний факт.
+
+    Frontmatter не трогаем вовсе — там живёт `characters`, состав серии.
+    """
+    project_dir = Path(project_dir)
+    if not fixes:
+        return 0
+    path = project_dir / script_rel(episode)
+    try:
+        art = load_artifact(path)
+    except (ArtifactError, OSError) as e:
+        raise FactCheckError(f"сценарий не читается: {e}") from None
+
+    body = art.body
+    for fix in fixes:
+        old = fix.old.strip("\n")
+        found = body.count(old)
+        if found == 0:
+            raise FactCheckError(
+                "правка не применена: в сценарии нет такого фрагмента — "
+                + old[:TAIL_CHARS])
+        if found > 1:
+            raise FactCheckError(
+                f"правка неоднозначна: фрагмент встречается {found} раза, "
+                "непонятно, какой править — " + old[:TAIL_CHARS])
+        body = body.replace(old, fix.new.strip("\n"), 1)
+
+    art.body = body
+    save_artifact(art)
+    return len(fixes)
 
 
 # --- запись результата ----------------------------------------------------
@@ -468,6 +544,14 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
         raise FactCheckError(str(e)) from None
 
     verdict = parse_verdict(answer)
+
+    # Правки идут ПЕРЕД записью отчёта: хеш сценария в отчёте обязан относиться
+    # к тексту после правок, иначе «проверено» сразу же устареет.
+    fixes = parse_fixes(answer)
+    if fixes:
+        log(f"правок в сценарии: {len(fixes)}")
+        apply_fixes(project_dir, episode, fixes)
+
     try:
         files = text_stages.parse_files(answer)
         written = text_stages.write_files(
@@ -483,5 +567,5 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     script_sha = stamp_report(project_dir, episode, verdict=verdict,
                               claims=len(claims), engine=engine.name, model=model)
     return {"verdict": verdict, "claims": len(claims), "written": written,
-            "script_sha": script_sha, "answer": answer,
+            "fixes": len(fixes), "script_sha": script_sha, "answer": answer,
             "search": getattr(search, "name", None)}

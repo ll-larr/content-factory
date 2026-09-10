@@ -310,12 +310,13 @@ def test_checker_never_sees_how_the_script_was_written(project):
         assert "секретный замысел" not in call["user"]
 
 
-def test_correction_keeps_script_frontmatter(project):
-    """Правка фактов не смеет затирать состав серии: он живёт во frontmatter."""
-    (project / "episodes" / "ep01" / "script.md").write_text(
-        "---\nkind: script\nstatus: draft\ncharacters: [Диктор]\n---\n"
-        "Диктор: Аполлон-11 сел на Луну в 1970 году.\n", encoding="utf-8")
-    fixed = """=== VERDICT: passed ===
+def test_whole_script_as_a_file_block_is_refused(project):
+    """Сценарий целиком проверяющий больше не пишет — попытка отбивается.
+
+    Он не помещается в один ответ вместе с отчётом: живой прогон 2026-09-10
+    вернул обрывок с середины, без вердикта. Правки едут парами «было → стало».
+    """
+    whole = """=== VERDICT: passed ===
 
 === FILE: episodes/ep01/script.md ===
 Диктор: Аполлон-11 сел на Луну в 1969 году.
@@ -325,14 +326,11 @@ def test_correction_keeps_script_frontmatter(project):
 исправлено: 1970 → 1969
 === END FILE ===
 """
-    engine = FakeEngine([CLAIMS_ANSWER, fixed])
+    engine = FakeEngine([CLAIMS_ANSWER, whole])
 
-    factcheck.run(project, REPO, "ep01", engine=engine, search=FakeSearch(),
-                  log=lambda *_: None)
-
-    script = (project / "episodes" / "ep01" / "script.md").read_text("utf-8")
-    assert "characters:" in script and "Диктор" in script
-    assert "1969" in script and "1970" not in script
+    with pytest.raises(factcheck.FactCheckError, match="script.md"):
+        factcheck.run(project, REPO, "ep01", engine=engine, search=FakeSearch(),
+                      log=lambda *_: None)
 
 
 def test_verdict_without_report_is_refused(project):
@@ -702,3 +700,93 @@ def test_panel_run_refuses_without_a_script(project, monkeypatch):
                               repo_root=REPO)
 
     assert "сначала этап script" in str(e.value)
+
+
+# --- точечные правки вместо целого сценария (2026-09-10) -------------------
+
+FIX_ANSWER = """=== VERDICT: passed ===
+
+=== FIX ===
+--- было ---
+Аполлон-11 сел на Луну в 1970 году.
+--- стало ---
+Аполлон-11 сел на Луну в 1969 году.
+=== END FIX ===
+
+=== FILE: episodes/ep01/fact-check.md ===
+исправлено: 1970 → 1969
+=== END FILE ===
+"""
+
+
+def test_fixes_are_parsed_as_pairs():
+    fixes = factcheck.parse_fixes(FIX_ANSWER)
+    assert len(fixes) == 1
+    assert fixes[0].old.strip().endswith("1970 году.")
+    assert fixes[0].new.strip().endswith("1969 году.")
+
+
+def test_fix_without_a_half_is_an_error():
+    """Правка без «стало» нечего применять, а молча пропустить — соврать."""
+    with pytest.raises(factcheck.FactCheckError):
+        factcheck.parse_fixes(
+            "=== FIX ===\n--- было ---\nчто-то\n=== END FIX ===")
+
+
+def test_fixes_apply_pointwise_and_keep_frontmatter(project):
+    """Меняется только названный фрагмент; состав серии остаётся на месте."""
+    script = project / "episodes" / "ep01" / "script.md"
+    script.write_text(
+        "---\nkind: script\nstatus: draft\ncharacters: [Диктор]\n---\n"
+        "Диктор: Аполлон-11 сел на Луну в 1970 году.\nВторая строка цела.\n",
+        encoding="utf-8")
+
+    factcheck.apply_fixes(project, "ep01", factcheck.parse_fixes(FIX_ANSWER))
+
+    body = script.read_text(encoding="utf-8")
+    assert "1969" in body and "1970" not in body
+    assert "characters:" in body and "Диктор" in body
+    assert "Вторая строка цела." in body
+
+
+def test_fragment_not_found_is_refused_by_name(project):
+    """Не найден — отказ с самим фрагментом: гадать, что имелось в виду, нельзя."""
+    fixes = factcheck.parse_fixes(FIX_ANSWER)
+
+    with pytest.raises(factcheck.FactCheckError) as e:
+        factcheck.apply_fixes(project, "ep01", fixes)
+
+    assert "1970" in str(e.value)
+
+
+def test_ambiguous_fragment_is_refused(project):
+    """Фрагмент встречается дважды — какой из них правят, неизвестно."""
+    script = project / "episodes" / "ep01" / "script.md"
+    script.write_text(
+        "---\nkind: script\nstatus: draft\n---\n"
+        "Аполлон-11 сел на Луну в 1970 году.\n"
+        "Аполлон-11 сел на Луну в 1970 году.\n", encoding="utf-8")
+
+    with pytest.raises(factcheck.FactCheckError, match="неоднозначна"):
+        factcheck.apply_fixes(project, "ep01", factcheck.parse_fixes(FIX_ANSWER))
+
+
+def test_run_applies_fixes_end_to_end(project):
+    """Проверяющий больше НЕ переписывает сценарий целиком.
+
+    Сценарий получасовой серии — 68 КБ; вместе с отчётом он не помещается в один
+    ответ модели, и живой прогон 2026-09-10 получил обрывок с середины, без
+    вердикта. Правки едут точечными парами «было → стало».
+    """
+    script = project / "episodes" / "ep01" / "script.md"
+    script.write_text(
+        "---\nkind: script\nstatus: draft\ncharacters: []\n---\n"
+        "Диктор: Аполлон-11 сел на Луну в 1970 году.\n", encoding="utf-8")
+    engine = FakeEngine([CLAIMS_ANSWER, FIX_ANSWER])
+
+    result = factcheck.run(project, REPO, "ep01", engine=engine,
+                           search=FakeSearch(), log=lambda *_: None)
+
+    assert result["verdict"] == "passed"
+    assert result["fixes"] == 1
+    assert "1969" in script.read_text(encoding="utf-8")
