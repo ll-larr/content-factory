@@ -104,8 +104,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/models":
                 q = parse_qs(url.query)
                 name = (q.get("project") or [""])[0]
-                return self._json({"roles": webapp.model_roles(
-                    self._project_dir(name))})
+                project_dir = self._project_dir(name)
+                return self._json({"roles": webapp.model_roles(project_dir),
+                                   "text": webapp.text_choice(project_dir)})
             if path == "/api/environment":
                 return self._json({"tools": webapp.environment_state()})
             if path == "/api/mixer":

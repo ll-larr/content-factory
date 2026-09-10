@@ -104,6 +104,23 @@ REQUIRED_BY_TYPE = {
 }
 
 
+# Чем пишутся ТЕКСТЫ проекта. Хранится в брифе рядом с моделями медиа, потому
+# что вопрос тот же — «какой моделью это делается», — и человек ищет ответ там
+# же. До 2026-09-10 выбора не было вовсе: для Claude Code модель не
+# передавалась, работало то, что настроено в CLI на машине, и узнать это из
+# панели было нельзя.
+TEXT_ENGINES = ("claude-code", "openrouter")
+
+# Уровни усилия, которые принимает Claude Code (`claude --effort`). Список снят
+# с `--help` живого CLI, а не выдуман.
+TEXT_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# Псевдонимы моделей, которые принимает `claude --model`. Полное имя
+# (`claude-fable-5`) тоже принимается — поэтому поле остаётся свободной
+# строкой, а список нужен панели, чтобы человеку было из чего выбирать.
+TEXT_MODEL_ALIASES = ("opus", "sonnet", "fable", "haiku")
+
+
 class ProjectError(ValueError):
     pass
 
@@ -133,6 +150,20 @@ class Project:
         познавательное бывает и горизонтальным, и вертикальным.
         """
         return FORMAT_ASPECT[self.format]
+
+    @property
+    def text_choice(self) -> dict:
+        """Чем писать тексты: движок, модель и усилие. Пустое — как есть у CLI.
+
+        Незаполненные поля НЕ подставляются: «модель не выбрана» и «выбрана
+        такая-то» — разные состояния, и подставить тут значило бы показать
+        человеку выбор, которого он не делал.
+        """
+        entry = (self.raw.get("models") or {}).get("text") or {}
+        engine = entry.get("engine") or TEXT_ENGINES[0]
+        return {"engine": engine,
+                "model": entry.get("model") or None,
+                "effort": entry.get("effort") or None}
 
     def genre_card(self, knowledge_dir="knowledge") -> dict:
         """Карточка жанра: стадии, запреты, язык раскадровки.

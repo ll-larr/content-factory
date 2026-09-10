@@ -160,7 +160,7 @@ class SavingEngine:
     def __init__(self, answer="=== FILE: bible/idea.md ===\nтело\n=== END FILE ==="):
         self.answer = answer
 
-    def complete(self, system, user, *, model=None):
+    def complete(self, system, user, *, model=None, effort=None):
         return self.answer
 
 

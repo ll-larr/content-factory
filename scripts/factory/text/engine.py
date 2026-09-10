@@ -70,6 +70,18 @@ RESET_MARGIN_SECONDS = 60
 _LIMIT_MARKERS = ("session limit", "usage limit", "limit reached",
                   "limit will reset", "rate limit", "429", "too many requests")
 
+# Временная помеха, не связанная с лимитом: сеть, шлюз, перегрузка. Такая же
+# пауза, только короткая и с потолком по числу попыток — сеть либо вернётся
+# через минуту, либо лежит совсем, и ждать её часами смысла нет.
+# `Connection dropped (ECONNRESET)` — с живого прогона 2026-09-10: стадия
+# раскадровки работала 20 минут и умерла на нём, потеряв всё написанное.
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_PAUSE_SECONDS = 60
+_TRANSIENT_MARKERS = ("econnreset", "connection dropped", "connection error",
+                      "connection reset", "socket hang up", "etimedout",
+                      "econnrefused", "bad gateway", "service unavailable",
+                      "gateway timeout", "overloaded", " 502", " 503", " 504")
+
 _RESET_HHMM = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2}):(\d{2})", re.IGNORECASE)
 _RESET_HOUR = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2})\s*(am|pm)", re.IGNORECASE)
 
@@ -92,6 +104,18 @@ def is_limit(said: str) -> bool:
     """Похоже ли это на исчерпанный лимит, а не на поломку."""
     low = (said or "").lower()
     return any(marker in low for marker in _LIMIT_MARKERS)
+
+
+def is_transient(said: str) -> bool:
+    """Помеха, которая проходит сама: сеть, шлюз, перегрузка.
+
+    Отказ ПО СУЩЕСТВУ («нет bible/idea.md») повторять нечего — он повторится
+    точно так же и только потратит время. Разделять их обязательно: иначе
+    повтор либо не случается там, где он бесплатен, либо случается там, где
+    бесполезен.
+    """
+    low = (said or "").lower()
+    return any(marker in low for marker in _TRANSIENT_MARKERS)
 
 
 def wait_for_limit(said: str, now: dt.datetime | None = None) -> int:
@@ -161,7 +185,8 @@ class TextEngine:
     def unavailable_reason(self) -> str:
         raise NotImplementedError
 
-    def complete(self, system: str, user: str, *, model: str | None = None) -> str:
+    def complete(self, system: str, user: str, *, model: str | None = None,
+                 effort: str | None = None) -> str:
         raise NotImplementedError
 
 
@@ -186,7 +211,8 @@ class ClaudeCodeEngine(TextEngine):
         return ("claude не найден в PATH; поставь Claude Code или задай "
                 f"{API_KEY_ENV}")
 
-    def complete(self, system: str, user: str, *, model: str | None = None) -> str:
+    def complete(self, system: str, user: str, *, model: str | None = None,
+                 effort: str | None = None) -> str:
         binary = shutil.which("claude")
         if binary is None:
             raise TextEngineError(self.unavailable_reason())
@@ -195,15 +221,36 @@ class ClaudeCodeEngine(TextEngine):
         # отдельного системного канала, а разделитель модель читает как границу.
         prompt = f"{system}\n\n---\n\n{user}"
         cmd = [binary, "-p"]
+        # Не выбрано — не передаём: у Claude Code на машине своя настройка, и
+        # подставлять за человека значило бы решать за него молча.
         if model:
             cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
 
         waited = 0
+        attempt = 0
         while True:
             done = self._run(cmd, prompt)
             if done.returncode == 0:
                 return done.stdout
             said = (done.stderr or done.stdout or "").strip()
+
+            # Помеха, которая проходит сама: сеть, шлюз, перегрузка. Ждём
+            # коротко и с потолком по числу попыток — сеть либо вернётся, либо
+            # лежит совсем, и ждать её часами (как лимит) смысла нет.
+            if is_transient(said):
+                attempt += 1
+                if attempt >= TRANSIENT_ATTEMPTS:
+                    raise TextEngineError(
+                        f"связь рвётся: {TRANSIENT_ATTEMPTS} попытки подряд "
+                        f"кончились одинаково. Сказано: {said}")
+                print(f"связь оборвалась ({said}); попытка "
+                      f"{attempt + 1} из {TRANSIENT_ATTEMPTS} через "
+                      f"{TRANSIENT_PAUSE_SECONDS} с", flush=True)
+                time.sleep(TRANSIENT_PAUSE_SECONDS)
+                continue
+
             if not is_limit(said):
                 raise TextEngineError(
                     self._explain(said)
@@ -292,7 +339,11 @@ class OpenRouterEngine(TextEngine):
         except (urllib.error.URLError, ValueError) as e:
             raise TextEngineError(f"OpenRouter недоступен: {e}") from None
 
-    def complete(self, system: str, user: str, *, model: str | None = None) -> str:
+    def complete(self, system: str, user: str, *, model: str | None = None,
+                 effort: str | None = None) -> str:
+        # `effort` здесь не при чём: это настройка Claude Code, а у OpenRouter
+        # своего такого рычага в нашем запросе нет. Молча принять и не
+        # использовать честнее, чем отказать: выбор относится к другому движку.
         key = os.environ.get(API_KEY_ENV)
         if not key:
             raise TextEngineError(self.unavailable_reason())

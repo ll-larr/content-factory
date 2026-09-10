@@ -402,7 +402,7 @@ class FakeEngine:
     def available(self):
         return True
 
-    def complete(self, system, user, *, model=None):
+    def complete(self, system, user, *, model=None, effort=None):
         self.seen = (system, user, model)
         return self.answer
 
@@ -440,7 +440,7 @@ def test_text_stage_rejects_unknown_stage(root):
 
 def test_text_stage_reports_engine_failure(root, monkeypatch):
     class Broken(FakeEngine):
-        def complete(self, system, user, *, model=None):
+        def complete(self, system, user, *, model=None, effort=None):
             from factory.text.engine import TextEngineError
             raise TextEngineError("модель отказала")
 
@@ -898,3 +898,54 @@ def test_estimate_shows_what_the_forecast_could_not_price(root):
     problems = webapp.project_estimate(root / "pilot", KNOWLEDGE)["problems"]
 
     assert any(p.startswith("прогноз:") and "voice_lines" in p for p in problems)
+
+
+# --- модель и усилие текстовых стадий (2026-09-10) -------------------------
+
+def test_text_choice_defaults_are_honest_about_being_unset(root):
+    """Панель обязана показать, чем пишутся тексты, а не молчать об этом.
+
+    До сих пор для Claude Code модель не передавалась вовсе: работало то, что
+    настроено в CLI на машине, и узнать это из панели было нельзя.
+    """
+    state = webapp.text_choice(root / "pilot")
+
+    assert state["engine"] == "claude-code"
+    assert state["model"] is None, "не выбрана — значит по умолчанию CLI"
+    assert state["effort"] is None
+    assert "opus" in state["models"], state["models"]
+    assert state["efforts"] == list(webapp.TEXT_EFFORTS)
+
+
+def test_text_model_and_effort_are_written_to_the_brief(root):
+    webapp.set_project_models(root / "pilot", {
+        "text": {"engine": "claude-code", "model": "opus", "effort": "high"}},
+        KNOWLEDGE)
+
+    state = webapp.text_choice(root / "pilot")
+    assert (state["model"], state["effort"]) == ("opus", "high")
+
+
+def test_unknown_effort_is_refused(root):
+    with pytest.raises(webapp.WebappError, match="усилие"):
+        webapp.set_project_models(root / "pilot", {
+            "text": {"engine": "claude-code", "effort": "максимальнейшее"}},
+            KNOWLEDGE)
+
+
+def test_unknown_text_engine_is_refused(root):
+    with pytest.raises(webapp.WebappError, match="движок"):
+        webapp.set_project_models(root / "pilot", {
+            "text": {"engine": "чат-бот"}}, KNOWLEDGE)
+
+
+def test_overview_shows_the_text_choice(root):
+    """Чем пишутся тексты — видно в шапке, а не только на вкладке моделей."""
+    webapp.set_project_models(root / "pilot", {
+        "text": {"engine": "claude-code", "model": "sonnet", "effort": "low"}},
+        KNOWLEDGE)
+
+    data = webapp.project_overview(root / "pilot", KNOWLEDGE)
+
+    assert data["text"]["model"] == "sonnet"
+    assert data["text"]["effort"] == "low"

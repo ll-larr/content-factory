@@ -869,20 +869,72 @@ async function loadProject() {
 /* ── Модели по ролям ───────────────────────────────── */
 // Последнее, что заставляло править project.json руками. Логика выбора здесь
 // не живёт: что можно взять и почём, решает сервер — панель только показывает.
+/* Текстовые стадии: чем пишутся сценарий, раскадровка, проверка фактов.
+   Отдельным разделом и с прямым названием движка — «модель» вообще ничего не
+   говорит человеку о том, ЧЬЯ это модель, а выбор тут именно про Claude Code
+   на этой машине: у второго движка модель берётся из своего списка. */
+function textModelsBlock(text) {
+  if (!text) return "";
+  const claude = text.engine === "claude-code";
+  return `<h2 class="sec">Текстовые стадии
+      <span>сценарий, раскадровка, проверка фактов — ими пишется текст, а не картинка</span></h2>
+    <div class="settings-row">
+      <div class="setting">
+        <span class="eyebrow">Чем писать</span>
+        <div class="chip-ep">
+          <button data-text-engine="claude-code" aria-pressed="${claude}">Claude Code на этой машине</button>
+          <button data-text-engine="openrouter" aria-pressed="${!claude}">Модель по ключу OpenRouter</button>
+        </div>
+        <span class="hint-inline muted">${claude
+          ? "тратит лимиты твоей сессии Claude Code, деньги за токены не идут"
+          : "тратит деньги по ключу OpenRouter, лимит сессии не трогает"}</span>
+      </div>
+
+      <label class="setting">
+        <span class="eyebrow">Модель Claude Code</span>
+        <select class="field" id="text-model-choice" ${claude ? "" : "disabled"}>
+          <option value="">по умолчанию (как настроен CLI)</option>
+          ${text.models.map((m) => `<option value="${esc(m)}"${
+            m === text.model ? " selected" : ""}>${esc(m)}</option>`).join("")}
+        </select>
+        <span class="hint-inline muted">${claude
+          ? "передаётся как <span class=\"mono\">claude --model</span>; «по умолчанию» — что выбрано в самом Claude Code"
+          : "относится к Claude Code; сейчас выбран другой движок"}</span>
+      </label>
+
+      <label class="setting">
+        <span class="eyebrow">Усилие Claude Code</span>
+        <select class="field" id="text-effort" ${claude ? "" : "disabled"}>
+          <option value="">по умолчанию</option>
+          ${text.efforts.map((e) => `<option value="${esc(e)}"${
+            e === text.effort ? " selected" : ""}>${esc(e)}</option>`).join("")}
+        </select>
+        <span class="hint-inline muted">${claude
+          ? "<span class=\"mono\">claude --effort</span>: выше — дольше думает и дороже по токенам; для сценария серии осмысленно high и выше, для питча хватит low"
+          : "относится к Claude Code; сейчас выбран другой движок"}</span>
+      </label>
+    </div>`;
+}
+
 async function renderModels() {
   if (!state.project) {
     $("#tab-models").innerHTML = `<div class="empty">Сначала выбери проект.</div>`;
     return;
   }
   let roles;
+  let text;
   try {
-    ({ roles } = await api(
+    ({ roles, text } = await api(
       `/api/models?project=${encodeURIComponent(state.project)}`));
   } catch (e) {
     $("#tab-models").innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
     return;
   }
 
+  // Текущий выбор держим в состоянии: сохраняется он целиком, и без этого
+  // правка усилия затирала бы выбранную модель.
+  state.textChoice = text ? {engine: text.engine, model: text.model,
+                             effort: text.effort} : null;
   const price = (v) => v === null || v === undefined ? "—" : "$" + Number(v).toFixed(4);
   const key = (c) => `${c.model}|${c.provider || ""}`;
 
@@ -894,6 +946,7 @@ async function renderModels() {
         длительность отрезка. Карточка со статусом skeleton видна, но не
         выбирается — её возможности и цена ничем не подтверждены.</p>
     </div></div>
+    ${textModelsBlock(text)}
     ${roles.map((r) => `
       <h2 class="sec">${esc(r.label)}<span>${esc(r.note)}</span></h2>
       <div class="mrole">
@@ -1332,6 +1385,9 @@ document.addEventListener("click", async (e) => {
   const mode = e.target.closest("[data-mode]");
   if (mode) { await saveSettings({ visual_mode: mode.dataset.mode }); return; }
 
+  const textEngine = e.target.closest("[data-text-engine]");
+  if (textEngine) { await saveTextChoice({ engine: textEngine.dataset.textEngine }); return; }
+
   const autonomy = e.target.closest("[data-autonomy]");
   if (autonomy) { await saveSettings({ autonomy: autonomy.dataset.autonomy }); return; }
 
@@ -1435,6 +1491,22 @@ async function deleteProject() {
   } catch (e) { toast(e.message, true); }
 }
 
+/* Выбор движка текста пишется тем же маршрутом, что и модели медиа: вопрос
+   один — «какой моделью это делается», — и разводить его по двум ручкам значит
+   однажды получить два разных ответа. Проверяет выбор сервер. */
+async function saveTextChoice(patch) {
+  try {
+    const current = state.textChoice || {};
+    await post("/api/models", {
+      project: state.project,
+      models: { text: { ...current, ...patch } },
+    });
+    toast("Сохранено в project.json");
+    await renderModels();
+    await loadProject();
+  } catch (e) { toast(e.message, true); }
+}
+
 async function saveSettings(changes) {
   try {
     const saved = await post("/api/settings", { project: state.project, ...changes });
@@ -1504,6 +1576,12 @@ document.addEventListener("change", async (e) => {
   }
   if (e.target.id === "text-model") state.model = e.target.value;
   if (e.target.id === "voice-lang") { voiceLang = e.target.value; await renderVoices(); }
+  if (e.target.id === "text-model-choice") {
+    await saveTextChoice({ model: e.target.value });
+  }
+  if (e.target.id === "text-effort") {
+    await saveTextChoice({ effort: e.target.value });
+  }
   const roleSelect = e.target.closest("[data-role]");
   if (roleSelect) await chooseModel(roleSelect.dataset.role, roleSelect.value);
   const slider = e.target.closest("[data-mix]");

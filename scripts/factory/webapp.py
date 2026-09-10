@@ -22,8 +22,10 @@ from factory.manifest import Manifest, ManifestError
 from factory.preprod import (FACT_CHECK_STAGE, STAGE_LABELS, artifact_state,
                              artifact_written, effective_feedback, episode_ids,
                              next_stage, project_artifacts, stage_problems)
-from factory.project import (FORMAT_LABELS, LANGUAGES, ProjectError,
-                             load_project)
+from factory.project import (FORMAT_LABELS, LANGUAGES, TEXT_ENGINES,
+                             ProjectError, load_project)
+from factory.project import TEXT_EFFORTS as project_text_efforts
+from factory.project import TEXT_MODEL_ALIASES as project_text_aliases
 from factory.providers import get_provider
 from factory.text import engine as text_engine
 from factory.safety import inside, is_safe_name
@@ -141,6 +143,9 @@ def project_overview(project_dir: Path,
         # подтверждением сметы, `full` — без остановок. Поле то же, что читает
         # `generate_batch` (потолок трат), а не второе имя для той же вещи.
         "autonomy": project.raw.get("autonomy", "checkpoints"),
+        # Чем пишутся тексты — такой же факт о проекте, как модель кадров.
+        # Молчать о нём значит оставить человека гадать, кто написал сценарий.
+        "text": project.text_choice,
         "models": project.models,
         "artifacts": _artifacts(project_dir),
         # Тексты, написанные и ждущие ОДОБРЕНИЯ человека. Место у ожидания
@@ -996,6 +1001,32 @@ def create_project(projects_root: Path | str, data: dict,
 # Список закрытый и живёт здесь один раз: имя роли приходит из браузера и
 # становится ключом в project.json. «Что угодно» в ключах брифа — не свобода,
 # а способ получить проект, который не читается.
+# Уровни усилия и псевдонимы моделей — из `factory/project.py`: там же, где их
+# читает конвейер. Панель их только показывает.
+TEXT_EFFORTS = project_text_efforts
+TEXT_MODEL_ALIASES = project_text_aliases
+
+
+def text_choice(project_dir: Path,
+                knowledge_dir: Path | str = Path("knowledge")) -> dict:
+    """Чем пишутся тексты этого проекта и из чего тут можно выбрать.
+
+    Отдельно от `model_roles`, потому что вопрос другой: там модели МЕДИА с
+    карточками, ценами и гейтом трат, здесь — движок текстовых стадий, у
+    которого ни карточки, ни цены за единицу нет. Общее только слово «модель».
+    """
+    try:
+        project = load_project(Path(project_dir) / "project.json")
+    except (ProjectError, OSError, ValueError) as e:
+        raise WebappError(str(e)) from None
+
+    chosen = project.text_choice
+    return {**chosen,
+            "engines": list(TEXT_ENGINES),
+            "models": list(TEXT_MODEL_ALIASES),
+            "efforts": list(TEXT_EFFORTS)}
+
+
 MODEL_ROLES: dict[str, dict] = {
     "image": {"label": "Кадры", "type": "image", "kind": None,
               "note": "по кадру на каждый план раскадровки"},
@@ -1012,6 +1043,31 @@ MODEL_ROLES: dict[str, dict] = {
     "audio.lipsync": {"label": "Липсинк", "type": "audio", "kind": "lipsync",
                       "note": "губы под уже записанную реплику"},
 }
+
+
+def _checked_text_choice(choice: dict) -> dict:
+    """Проверить выбор движка текста ДО записи в бриф.
+
+    Уровень усилия и движок — закрытые списки: опечатка в них всплыла бы уже
+    внутри запущенной стадии, отказом чужой программы посреди журнала.
+    Модель остаётся свободной строкой: `claude --model` принимает и псевдоним,
+    и полное имя, и список псевдонимов у панели — подсказка, а не ограничение.
+    """
+    if not isinstance(choice, dict):
+        raise WebappError(f"выбор движка текста — объект, получено {choice!r}")
+
+    engine = choice.get("engine") or TEXT_ENGINES[0]
+    if engine not in TEXT_ENGINES:
+        raise WebappError(
+            f"неизвестный движок {engine!r}; известны {list(TEXT_ENGINES)}")
+
+    effort = choice.get("effort") or None
+    if effort is not None and effort not in TEXT_EFFORTS:
+        raise WebappError(
+            f"неизвестное усилие {effort!r}; известны {list(TEXT_EFFORTS)}")
+
+    model = (choice.get("model") or "").strip() or None
+    return {"engine": engine, "model": model, "effort": effort}
 
 
 def _role_current(project, role: str) -> dict:
@@ -1165,6 +1221,10 @@ def set_project_models(project_dir: Path, changes: dict,
 
     data = json.loads(path.read_text(encoding="utf-8"))
     models = data.setdefault("models", {})
+
+    text = changes.pop("text", None)
+    if text is not None:
+        models["text"] = _checked_text_choice(text)
 
     for role, choice in changes.items():
         if role not in MODEL_ROLES:

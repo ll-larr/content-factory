@@ -55,7 +55,7 @@ class FakeEngine:
     def available(self):
         return True
 
-    def complete(self, system, user, *, model=None):
+    def complete(self, system, user, *, model=None, effort=None):
         self.calls.append({"system": system, "user": user, "model": model})
         if not self._answers:
             raise AssertionError("движок позвали больше раз, чем ожидалось")

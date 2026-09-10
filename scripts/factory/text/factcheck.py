@@ -470,8 +470,8 @@ def report_state(project_dir: Path | str, episode: str) -> dict:
 # --- оркестровка ----------------------------------------------------------
 
 def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
-        engine: TextEngine, model: str | None = None, search=None,
-        log=print) -> dict:
+        engine: TextEngine, model: str | None = None, effort: str | None = None,
+        search=None, log=print) -> dict:
     """Провести проверку целиком: два прохода, поиск между ними, запись.
 
     Один вход для CLI и для панели: методика проверки не должна зависеть от
@@ -517,7 +517,7 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     try:
         answer = text_stages.ask(engine, first.system, first.user,
                                  project_dir=project_dir, stage_id=STAGE_ID,
-                                 episode=episode, model=model)
+                                 episode=episode, model=model, effort=effort)
     except TextEngineError as e:
         raise FactCheckError(str(e)) from None
     claims = parse_claims(answer)
@@ -539,7 +539,7 @@ def run(project_dir: Path | str, repo_root: Path | str, episode: str, *,
     try:
         answer = text_stages.ask(engine, second.system, second.user,
                                  project_dir=project_dir, stage_id=STAGE_ID,
-                                 episode=episode, model=model)
+                                 episode=episode, model=model, effort=effort)
     except TextEngineError as e:
         raise FactCheckError(str(e)) from None
 

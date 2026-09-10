@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from factory.env import load_env                               # noqa: E402
+from factory.project import ProjectError, load_project         # noqa: E402
 from factory.text import factcheck as text_factcheck           # noqa: E402
 from factory.text import stages as text_stages                 # noqa: E402
 from factory.text.engine import TextEngineError, pick_engine   # noqa: E402
@@ -49,8 +50,7 @@ def _run_factcheck(args, project_dir: Path) -> int:
         print(f"нечем писать: {e}")
         return 1
 
-    print(f"движок: {engine.label}"
-          + (f" · модель {args.model}" if args.model else ""))
+    print(_said_engine(engine, args))
     print(f"стадия: проверка фактов · серия {args.episode}")
     if args.request.strip():
         # Пожелание автора до проверяющего не доезжает СОЗНАТЕЛЬНО: он не верит
@@ -61,7 +61,8 @@ def _run_factcheck(args, project_dir: Path) -> int:
               "по правилу жанра")
     try:
         result = text_factcheck.run(project_dir, ROOT, args.episode,
-                                    engine=engine, model=args.model)
+                                    engine=engine, model=args.model,
+                                    effort=args.effort)
     except text_factcheck.FactCheckBlocked as e:
         # Код 2 — отказ по контракту входных данных, та же дисциплина, что у
         # ShotsError в generate_batch: техническим сбоем (1) это не является, и
@@ -84,6 +85,56 @@ def _run_factcheck(args, project_dir: Path) -> int:
     return 0
 
 
+def _fill_from_brief(args, project_dir: Path) -> None:
+    """Подставить движок, модель и усилие из брифа там, где флаг не задан.
+
+    Флаг сильнее брифа: разовый запуск другой моделью не должен требовать
+    правки проекта, — но молчание флага означает «как записано у проекта», а не
+    «как настроен CLI на этой машине».
+    """
+    try:
+        choice = load_project(project_dir / "project.json").text_choice
+    except (ProjectError, OSError, ValueError):
+        return
+    args.engine = args.engine or choice["engine"]
+    args.model = args.model or choice["model"]
+    args.effort = args.effort or choice["effort"]
+
+
+def _said_approval(project_dir: Path, written: list[str]) -> str:
+    """Кому и что делать с записанным — по факту, а не одной фразой на всё.
+
+    Совет «одобряй артефакты» печатался после ЛЮБОЙ стадии. После раскадровки
+    он отправлял человека искать в панели то, чего там быть не может:
+    `shots.json` — не артефакт одобрения, у него нет ни frontmatter, ни статуса,
+    его читает съёмка. А в автономном режиме совет одобрять руками — прямая
+    дезинформация: одобряет сам режим (живой прогон 2026-09-10).
+    """
+    approvable = [rel for rel in written if rel.endswith(".md")]
+    if not approvable:
+        return ("готово. Одобрять нечего: это не артефакт одобрения — "
+                "статуса у него нет, его читает следующая стадия.")
+    try:
+        autonomy = load_project(project_dir / "project.json").raw.get("autonomy")
+    except (ProjectError, OSError, ValueError):
+        autonomy = None
+    if autonomy == "full":
+        return ("готово. Одобрит автономный режим сам — в файле останется "
+                "approved_by: auto.")
+    return ("готово. Одобрять артефакты — factory.py approve, "
+            "status: approved стадия себе не ставит.")
+
+
+def _said_engine(engine, args) -> str:
+    """Строка журнала: чем именно пишется эта стадия."""
+    parts = [f"движок: {engine.label}"]
+    if args.model:
+        parts.append(f"модель {args.model}")
+    if args.effort:
+        parts.append(f"усилие {args.effort}")
+    return " · ".join(parts)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", required=True)
@@ -91,12 +142,18 @@ def main(argv=None) -> int:
     ap.add_argument("--episode")
     ap.add_argument("--model")
     ap.add_argument("--engine")
+    ap.add_argument("--effort", help="усилие Claude Code: low…max")
     ap.add_argument("--request", default="")
     args = ap.parse_args(argv)
 
     load_env(ROOT)
 
     project_dir = Path(args.project)
+    # Чем писать — из БРИФА, если не сказано иначе флагом. Один источник на
+    # панель, автономный режим и терминал: иначе «чем написан сценарий»
+    # зависело бы от того, кто запустил стадию.
+    _fill_from_brief(args, project_dir)
+
     if args.stage == text_factcheck.STAGE_ID:
         return _run_factcheck(args, project_dir)
 
@@ -114,8 +171,7 @@ def main(argv=None) -> int:
         print(f"нечем писать: {e}")
         return 1
 
-    print(f"движок: {engine.label}"
-          + (f" · модель {args.model}" if args.model else ""))
+    print(_said_engine(engine, args))
     print(f"стадия: {prompt.stage.label}"
           + (f" · серия {args.episode}" if args.episode else ""))
     if prompt.outputs:
@@ -128,7 +184,8 @@ def main(argv=None) -> int:
         # или закрытой вкладки нельзя.
         answer = text_stages.ask(engine, prompt.system, prompt.user,
                                  project_dir=project_dir, stage_id=args.stage,
-                                 episode=args.episode, model=args.model)
+                                 episode=args.episode, model=args.model,
+                                 effort=args.effort)
     except TextEngineError as e:
         print(f"движок отказал: {e}")
         return 1
@@ -157,8 +214,7 @@ def main(argv=None) -> int:
 
     for rel in written:
         print(f"записан {rel}")
-    print("готово. Одобрять артефакты — factory.py approve, "
-          "status: approved стадия себе не ставит.")
+    print(_said_approval(project_dir, written))
     return 0
 
 

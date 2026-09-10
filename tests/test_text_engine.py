@@ -322,3 +322,94 @@ def test_reset_hour_is_read_from_the_real_wording():
     seconds = eng.wait_for_limit(REAL_LIMIT_SAID, now=now)
 
     assert 55 * 60 <= seconds <= 65 * 60, seconds
+
+
+# --- обрыв связи: повторяем, а не роняем стадию (2026-09-10) ---------------
+
+DROPPED_SAID = "API Error: Connection dropped (ECONNRESET)"
+
+
+def test_dropped_connection_is_retried(monkeypatch):
+    """Обрыв сети — временная помеха, как и лимит.
+
+    Живой прогон 2026-09-10: раскадровка работала 20 минут и умерла на
+    ECONNRESET. Повтор дешевле потерянной стадии.
+    """
+    import subprocess
+
+    run = FakeRun((1, "", DROPPED_SAID), (0, "план съёмки", ""))
+    slept = []
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(eng.time, "sleep", lambda s: slept.append(s))
+
+    assert eng.ClaudeCodeEngine().complete("с", "з") == "план съёмки"
+    assert run.calls == 2 and slept
+
+
+def test_repeated_drops_give_up_and_say_so(monkeypatch):
+    """Сеть лежит совсем — отказ честный, с числом попыток."""
+    import subprocess
+
+    run = FakeRun((1, "", DROPPED_SAID))
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(eng.time, "sleep", lambda s: None)
+
+    with pytest.raises(eng.TextEngineError) as e:
+        eng.ClaudeCodeEngine().complete("с", "з")
+
+    assert run.calls == eng.TRANSIENT_ATTEMPTS
+    assert str(eng.TRANSIENT_ATTEMPTS) in str(e.value)
+
+
+def test_a_real_refusal_is_not_retried(monkeypatch):
+    """Отказ по существу повторять нечего: он повторится точно так же."""
+    import subprocess
+
+    run = FakeRun((1, "", "стадия не собрана: нет bible/idea.md"))
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(eng.time, "sleep", lambda s: pytest.fail("ждать незачем"))
+
+    with pytest.raises(eng.TextEngineError):
+        eng.ClaudeCodeEngine().complete("с", "з")
+
+    assert run.calls == 1
+
+
+def test_model_and_effort_reach_the_cli(monkeypatch):
+    """Выбранное человеком должно доехать до команды, а не остаться в панели."""
+    import subprocess
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        import types
+        seen["cmd"] = list(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="готово", stderr="")
+
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    eng.ClaudeCodeEngine().complete("с", "з", model="opus", effort="xhigh")
+
+    assert "--model" in seen["cmd"] and "opus" in seen["cmd"]
+    assert "--effort" in seen["cmd"] and "xhigh" in seen["cmd"]
+
+
+def test_nothing_chosen_means_nothing_passed(monkeypatch):
+    """Не выбрано — не передаём: у CLI своя настройка, и врать ей нечем."""
+    import subprocess
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        import types
+        seen["cmd"] = list(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="готово", stderr="")
+
+    monkeypatch.setattr("shutil.which", lambda name: "C:/claude.CMD")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    eng.ClaudeCodeEngine().complete("с", "з")
+
+    assert "--model" not in seen["cmd"] and "--effort" not in seen["cmd"]

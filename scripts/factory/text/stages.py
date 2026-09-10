@@ -249,7 +249,7 @@ LAST_ANSWER = ".last-answer.md"
 
 def ask(engine, system: str, user: str, *, project_dir: Path | str,
         stage_id: str, episode: str | None = None,
-        model: str | None = None) -> str:
+        model: str | None = None, effort: str | None = None) -> str:
     """Спросить движок и СОХРАНИТЬ сырой ответ рядом с проектом.
 
     Единственное место, где текстовая стадия зовёт движок: у ответа три
@@ -261,7 +261,7 @@ def ask(engine, system: str, user: str, *, project_dir: Path | str,
     не разобравшийся по формату, терял начало. Файл переживает и это, и
     закрытую вкладку.
     """
-    answer = engine.complete(system, user, model=model)
+    answer = engine.complete(system, user, model=model, effort=effort)
     _save_answer(Path(project_dir), stage_id, episode, answer)
     return answer
 

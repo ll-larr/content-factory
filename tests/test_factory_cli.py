@@ -819,3 +819,96 @@ providers:
     out = capsys.readouterr().out
     # 65 секунд по $0.01 = $0.65, а не две штуки по цене одной секунды
     assert "0.65" in out
+
+
+# --- выбор модели текста берётся из брифа (2026-09-10) ---------------------
+
+def test_text_stage_reads_model_and_effort_from_the_brief(proj, monkeypatch, capsys):
+    """Выбор человека живёт в брифе, а не в аргументах каждой команды.
+
+    Иначе панель, автономный режим и терминал звали бы стадию по-разному, и
+    «чем написан сценарий» зависело бы от того, кто её запустил.
+    """
+    import text_stage
+    from factory.text import engine as eng
+
+    brief = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    brief.setdefault("models", {})["text"] = {
+        "engine": "claude-code", "model": "opus", "effort": "xhigh"}
+    (proj / "project.json").write_text(json.dumps(brief, ensure_ascii=False),
+                                       encoding="utf-8")
+    seen = {}
+
+    class FakeEngine:
+        name, label = "claude-code", "фейковый"
+
+        def available(self):
+            return True
+
+        def complete(self, system, user, *, model=None, effort=None):
+            seen.update(model=model, effort=effort)
+            return "=== FILE: bible/idea.md ===\nтело\n=== END FILE ==="
+
+    monkeypatch.setattr(text_stage, "pick_engine", lambda preferred=None: FakeEngine())
+    monkeypatch.setattr(eng, "pick_engine", lambda preferred=None: FakeEngine())
+
+    code = text_stage.main(["--project", str(proj), "--stage", "story"])
+
+    assert code == 0
+    assert seen == {"model": "opus", "effort": "xhigh"}
+    assert "opus" in capsys.readouterr().out, "чем писалось — видно в журнале"
+
+
+def test_json_output_is_not_offered_for_approval(proj, monkeypatch, capsys):
+    """`shots.json` одобрять нечем: статуса у него нет, его читает съёмка.
+
+    Совет «одобряй артефакты» печатался после любой стадии, и человек искал в
+    панели то, чего там быть не может (живой прогон 2026-09-10).
+    """
+    import text_stage
+
+    class FakeEngine:
+        name, label = "claude-code", "фейковый"
+
+        def available(self):
+            return True
+
+        def complete(self, system, user, *, model=None, effort=None):
+            return ('=== FILE: episodes/ep01/shots.json ===\n'
+                    '{"episode": "ep01", "frames": []}\n=== END FILE ===')
+
+    monkeypatch.setattr(text_stage, "pick_engine", lambda preferred=None: FakeEngine())
+
+    text_stage.main(["--project", str(proj), "--stage", "storyboard",
+                     "--episode", "ep01"])
+
+    out = capsys.readouterr().out
+    assert "Одобрять артефакты" not in out
+    assert "одобрять нечего" in out.lower() or "не артефакт" in out.lower()
+
+
+def test_autonomous_mode_says_who_approves(proj, monkeypatch, capsys):
+    """В автономном режиме совет «одобри руками» — прямая дезинформация."""
+    import text_stage
+
+    brief = json.loads((proj / "project.json").read_text(encoding="utf-8"))
+    brief["autonomy"] = "full"
+    (proj / "project.json").write_text(json.dumps(brief, ensure_ascii=False),
+                                       encoding="utf-8")
+
+    class FakeEngine:
+        name, label = "claude-code", "фейковый"
+
+        def available(self):
+            return True
+
+        def complete(self, system, user, *, model=None, effort=None):
+            return "=== FILE: bible/idea.md ===\nтело\n=== END FILE ==="
+
+    monkeypatch.setattr(text_stage, "pick_engine", lambda preferred=None: FakeEngine())
+
+    text_stage.main(["--project", str(proj), "--stage", "story"])
+
+    out = capsys.readouterr().out
+    assert "автономный режим" in out.lower()
+    assert "factory.py approve" not in out
