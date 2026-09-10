@@ -62,8 +62,13 @@ RESET_MARGIN_SECONDS = 60
 
 # Признаки исчерпанного лимита в выводе CLI. Список открытый: чужие сообщения
 # меняются, и лишний повтор дешевле проваленной стадии.
-_LIMIT_MARKERS = ("usage limit", "limit reached", "limit will reset",
-                  "rate limit", "429", "too many requests")
+#
+# «session limit» — НЕ догадка: ровно так сказал CLI живому прогону 2026-09-10
+# («You've hit your session limit · resets 8pm (Europe/Moscow)»). Остальные
+# написаны по догадке, и именно поэтому настоящее сообщение они не узнали —
+# стадия упала как «движок отказал» вместо того, чтобы дождаться сброса.
+_LIMIT_MARKERS = ("session limit", "usage limit", "limit reached",
+                  "limit will reset", "rate limit", "429", "too many requests")
 
 _RESET_HHMM = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2}):(\d{2})", re.IGNORECASE)
 _RESET_HOUR = re.compile(r"reset[^\d\n]{0,40}?(\d{1,2})\s*(am|pm)", re.IGNORECASE)

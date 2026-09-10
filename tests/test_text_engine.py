@@ -300,3 +300,25 @@ def test_unparsed_message_falls_back_to_an_interval():
     """Формулировка чужой программы может измениться — это не повод сдаваться."""
     seconds = eng.wait_for_limit("limit reached, try later")
     assert seconds == eng.RETRY_INTERVAL_SECONDS
+
+
+REAL_LIMIT_SAID = "You've hit your session limit · resets 8pm (Europe/Moscow)"
+
+
+def test_real_cli_wording_is_recognised_as_a_limit():
+    """Формулировка снята с живого прогона 2026-09-10, не выдумана.
+
+    Маркеры были написаны по догадке («usage limit», «limit reached») и настоящее
+    сообщение не узнали: стадия упала как «движок отказал» вместо того, чтобы
+    подождать сброса и повториться.
+    """
+    assert eng.is_limit(REAL_LIMIT_SAID) is True
+
+
+def test_reset_hour_is_read_from_the_real_wording():
+    import datetime as dt
+
+    now = dt.datetime(2026, 9, 10, 19, 0)
+    seconds = eng.wait_for_limit(REAL_LIMIT_SAID, now=now)
+
+    assert 55 * 60 <= seconds <= 65 * 60, seconds
