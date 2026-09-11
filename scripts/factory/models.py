@@ -231,6 +231,27 @@ def estimate_media_cost(card: dict, provider: str, resolution: str,
     return cost
 
 
+def duration_problem(card: dict, provider: str | None,
+                     seconds: float) -> str | None:
+    """Влезает ли столько секунд в ОДИН вызов модели. None — влезает.
+
+    Предел объявляется ДАННЫМИ (`max_duration_sec` у провайдера или у карточки);
+    не объявлен — не проверяем, та же дисциплина, что у `allowed_durations`:
+    выдуманный предел отказывал бы в работе, которую модель делает.
+
+    Нужно потому, что провайдер отбивает такое уже ПОСЛЕ сметы: WaveSpeed вернул
+    «field "duration" must be at most 360, got number 380» на музыку в 380 с,
+    когда план был утверждён и смета посчитана (живой прогон 2026-09-11). Это
+    гейт трат, а не сюрприз по факту запроса.
+    """
+    entry = (card.get("providers") or {}).get(provider) or {}
+    limit = entry.get("max_duration_sec", card.get("max_duration_sec"))
+    if limit is None or seconds <= float(limit):
+        return None
+    return (f"{card.get('id')}: длительность {seconds:g} с больше предела "
+            f"модели {float(limit):g} с за один вызов")
+
+
 def validate_audio_model(card: dict, provider: str | None = None,
                          audio_kind: str | None = None) -> list[str]:
     """Валидация аудио-модели ДО траты кредитов (спека фазы 2 §5).

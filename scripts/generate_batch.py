@@ -32,7 +32,8 @@ from factory.env import load_env
 from factory.ffmpeg_tools import (FfmpegError, apply_voice_process,
                                   ensure_png)
 from factory.manifest import Manifest, ManifestError
-from factory.models import (find_card, validate_audio_model, validate_image_model,
+from factory.models import (duration_problem, find_card, validate_audio_model,
+                            validate_image_model,
                             validate_video_model)
 from factory.preprod import episode_cast, stage_gate
 from factory.project import ProjectError, load_project
@@ -584,6 +585,24 @@ def _run_jobs(jobs: list[dict], manifest, provider, provider_name: str,
         return 0
 
     # provider уже создан выше (рядом с preflight-хуком) — переиспользуем.
+
+    # Длиннее, чем модель умеет за один вызов, — отказ ДО сметы. Проверяем по
+    # СОБРАННЫМ заданиям: длительность лежит в их параметрах, и одно место
+    # закрывает все стадии сразу. Провайдер отбивал такое по факту запроса, то
+    # есть смета обещала цену невыполнимой работы (живой прогон 2026-09-11).
+    too_long = []
+    for j in todo:
+        seconds = j["params"].get("duration")
+        if seconds is None:
+            continue
+        problem = duration_problem(
+            find_card(KNOWLEDGE_DIR, j["model"]), provider_name, float(seconds))
+        if problem:
+            too_long.append(f"{j['item_id']}: {problem}")
+    if too_long:
+        return _validation_gate(
+            too_long + ["план правится стадией audio_plan: разбей единицу "
+                        "на несколько или укороти"])
 
     # Спека §8 шаг 2: смета перед запуском (бесплатно, до трат)
     estimates = {j["item_id"]: provider.estimate(j["model"], j["params"])

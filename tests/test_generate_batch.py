@@ -1328,3 +1328,57 @@ def test_ceiling_holds_in_manual_mode_too(proj, monkeypatch, capsys):
 
     assert run(proj, "storyboard") == 3
     assert "БЮДЖЕТ ИСЧЕРПАН" in capsys.readouterr().out
+
+
+# --- предел длительности одного вызова ------------------------------------
+
+def _music_card_with_limit(proj, limit):
+    """Карточка музыки, объявляющая предел длительности ДАННЫМИ."""
+    (Path("knowledge") / "audio" / "music_x.md").write_text(
+        "---\nid: music_x\ntype: audio\naudio_kind: music\nstatus: verified\n"
+        "providers:\n"
+        "  wavespeed: { id: \"v/music\", usd_per_image: 0.003,"
+        f" max_duration_sec: {limit},"
+        " fields: { prompt: prompt, duration: duration } }\n"
+        "---\n# music\n", encoding="utf-8")
+
+
+def test_unit_longer_than_the_model_can_do_is_refused_before_the_estimate(
+        proj, monkeypatch, capsys):
+    """Провайдер отбивал такое ПОСЛЕ сметы — деньги считали за невыполнимое."""
+    enable_audio(proj)
+    _music_card_with_limit(proj, 360)
+    plan = json.loads(json.dumps(PLAN))
+    plan["music_cues"][0]["duration"] = 380
+    write_audio_plan(proj, plan)
+    fp = fake_provider(monkeypatch)
+
+    assert run(proj, "audio") == 2
+    out = capsys.readouterr().out
+    assert "mus-01" in out and "380" in out and "360" in out
+    assert "СМЕТА" not in out          # отказ ДО сметы
+    assert fp.submitted == []          # и до единого запроса
+
+
+def test_unit_within_the_limit_runs(proj, monkeypatch):
+    enable_audio(proj)
+    _music_card_with_limit(proj, 360)
+    plan = json.loads(json.dumps(PLAN))
+    plan["music_cues"][0]["duration"] = 360
+    write_audio_plan(proj, plan)
+    fp = fake_provider(monkeypatch)
+
+    assert run(proj, "audio") == 0
+    assert len(fp.submitted) == 3
+
+
+def test_model_without_a_declared_limit_is_not_second_guessed(proj, monkeypatch):
+    """Предел не объявлен — не выдумываем: та же дисциплина, что у сетки."""
+    enable_audio(proj)                  # MUSIC_CARD без max_duration_sec
+    plan = json.loads(json.dumps(PLAN))
+    plan["music_cues"][0]["duration"] = 3600
+    write_audio_plan(proj, plan)
+    fp = fake_provider(monkeypatch)
+
+    assert run(proj, "audio") == 0
+    assert len(fp.submitted) == 3

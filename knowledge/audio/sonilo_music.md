@@ -11,7 +11,10 @@ providers:
   # через эти точки не проходит через ноль, то есть тариф не чисто посекундный
   # (похоже на блоки). Берём ВЕРХНЮЮ наблюдённую ставку $0.00267/с ($0.08/30с):
   # смета должна ошибаться в большую сторону, а не в меньшую.
-  wavespeed: { id: "sonilo/text-to-music", pricing: flat, usd_per_sec: 0.00267, fields: { prompt: prompt, duration: duration } }
+  # max_duration_sec — ДАННЫЕ, а не проза: гейт трат читает его и отбивает
+  # слишком длинную единицу ДО сметы. Число названо самим провайдером в отказе
+  # 400 на живом прогоне 2026-09-11 («must be at most 360, got number 380»).
+  wavespeed: { id: "sonilo/text-to-music", pricing: flat, usd_per_sec: 0.00267, max_duration_sec: 360, fields: { prompt: prompt, duration: duration } }
 ---
 
 # Sonilo Text-to-Music — фоновая музыка
