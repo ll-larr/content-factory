@@ -188,8 +188,15 @@ function renderPipe() {
   const ep = currentEpisode();
   const waiting = ep ? ep.items.filter((i) => i.status === "generated") : [];
 
+  // Остаток по платной стадии называется вслух: прерванная съёмка запускается
+  // снова и доснимает недостающее, но подпись у неё та же, что в первый раз, —
+  // и «раскадровка» во второй раз читается как «всё заново за мои деньги»
+  // (живой прогон 2026-09-11). Число считает сервер той же сметой.
+  const left = d.next && typeof d.next.remaining === "number"
+    ? ` · осталось ${d.next.remaining} шт`
+    : "";
   const nextText = d.next
-    ? `<b>${esc(d.next.stage)}</b> ${esc(d.next.episode || "")} — ${esc(d.next.label)}`
+    ? `<b>${esc(d.next.stage)}</b> ${esc(d.next.episode || "")} — ${esc(d.next.label)}${left}`
     : "нечего делать: всё закрыто или ждёт приёмки";
 
   // Автономный режим ведёт конвейер сам, ручной — по шагу за нажатие. Режим
@@ -359,12 +366,13 @@ function renderPipe() {
         <button class="btn sm" id="accept-all">Принять всё (${queue})</button>
         ${waiting.length
           ? `<button class="btn sm ghost danger" id="reject-all"
-               >Отклонить кадры (${waiting.length})</button>` : ""}
+               >Отклонить генерации (${waiting.length})</button>` : ""}
       </span>`
     : "";
   $("#tab-pipe").innerHTML = head + stages + taskBox + factCheckBlock(ep) +
     `<h2 class="sec">Ждёт приёмки <span class="hint">${queue
-      ? "кадры открываются крупно, тексты — по ссылке" : "пусто"}</span>${bulk}</h2>` + review +
+      ? "кадры открываются крупно, звук слушается на месте, тексты — по ссылке"
+      : "пусто"}</span>${bulk}</h2>` + review +
     `<h2 class="sec">Тексты <span class="hint">status ставит только approve</span></h2>` + arts +
     finals;
 
@@ -482,13 +490,27 @@ async function showFactCheckReport() {
   } catch (e) { toast(e.message, true); }
 }
 
+/* Чем показывать единицу приёмки, решает РАСШИРЕНИЕ её файла: в очереди рядом
+   стоят кадр, отрезок и реплика диктора. До 2026-09-11 всё, кроме .mp4,
+   рисовалось тегом <img>, и реплика приезжала битой иконкой — принять её можно
+   было только не слушав, то есть приёмки звука не существовало. */
+const AUDIO_EXT = [".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"];
+const VIDEO_EXT = [".mp4", ".webm", ".mov"];
+const ends = (file, list) => list.some((ext) => file.toLowerCase().endsWith(ext));
+
 function cardHtml(item) {
   const src = item.file
     ? `/media/${encodeURIComponent(state.project)}/${item.file}`
     : null;
   const media = !src ? `<div class="empty plain">файла нет</div>`
-    : item.file.endsWith(".mp4")
+    : ends(item.file, VIDEO_EXT)
       ? `<video src="${src}" controls preload="metadata" data-item="${esc(item.id)}"></video>`
+    : ends(item.file, AUDIO_EXT)
+      // Звук показать нечем — его слушают. Плеер с controls и есть та самая
+      // кнопка play; preload="none" потому, что реплик в серии сотни и тянуть
+      // их все ради полоски прогресса значит платить трафиком за картинку.
+      ? `<div class="sound"><audio src="${src}" controls preload="none"
+           data-item="${esc(item.id)}"></audio></div>`
       : `<img src="${src}" loading="lazy" alt="" data-zoom="${esc(item.id)}">`;
   return `<div class="card">${media}
     <div class="meta">

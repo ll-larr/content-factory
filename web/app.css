@@ -184,6 +184,12 @@ h2.sec::after { content:""; flex:1; height:1px; background:var(--line-soft); }
   overflow:hidden; display:flex; flex-direction:column; }
 .card img, .card video { width:100%; aspect-ratio:16/9; object-fit:cover; display:block;
   background:#05090C; cursor:pointer; }
+/* Звуковая единица занимает то же место в сетке, что кадр, но растягивать
+   плеер на 16:9 нечем: высота у него своя. Поэтому рамка держит ту же
+   пропорцию, а плеер стоит в ней по центру. */
+.card .sound { aspect-ratio:16/9; background:#05090C; display:flex;
+  align-items:center; justify-content:center; padding:0 10px; }
+.card .sound audio { width:100%; }
 .card .meta { padding:9px 11px 11px; display:grid; gap:8px; }
 .card .id { font-family:var(--f-mono); font-size:11px; color:var(--text-2); }
 .card .row { display:flex; gap:6px; }

@@ -222,6 +222,40 @@ def episode_estimate(project_dir: Path | str, episode: str,
     return {"rows": rows, "total": total, "budget": budget, "problems": problems}
 
 
+# Какие строки сметы закрывает каждая ЗАПУСКАЕМАЯ стадия. Одна стадия делает
+# несколько строк: `audio` снимает и реплики, и музыку, и эффекты. Соответствие
+# живёт здесь, рядом с самими строками: панель, посчитавшая его по-своему,
+# обещала бы кнопкой не то число, что смета (D-3).
+STAGE_ROWS = {
+    "storyboard": ("storyboard",),
+    "segments": ("segments",),
+    "audio": ("voice_lines", "music_cues", "sfx"),
+    "foley": ("foley",),
+    "lipsync": ("lipsync",),
+}
+
+
+def remaining_units(project_dir: Path | str, episode: str, run_stage: str,
+                    knowledge_dir: Path | str = KNOWLEDGE_DIR) -> int | None:
+    """Сколько единиц этой стадии ещё не снято. None — сосчитать нечем.
+
+    Нужно КНОПКЕ: платная стадия, прерванная на середине, запускается снова и
+    доснимает остаток, но подпись у неё та же, что в первый раз. Человек,
+    принявший девяносто кадров и увидевший «раскадровка» опять, читает это как
+    «всё заново за мои деньги» (живой прогон 2026-09-11). Считается тем же
+    `episode_estimate`, что и цена: два ответа на «сколько осталось» разошлись
+    бы в первый же день.
+    """
+    names = STAGE_ROWS.get(run_stage)
+    if not names:
+        return None
+    try:
+        rows = episode_estimate(project_dir, episode, knowledge_dir)["rows"]
+    except EstimateError:
+        return None
+    return sum(row["count"] for row in rows if row["stage"] in names)
+
+
 def _lipsync_allowed(project) -> bool:
     """Допускает ли жанр липсинк.
 

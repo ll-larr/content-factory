@@ -162,7 +162,7 @@ def project_overview(project_dir: Path,
             for item_id, item in sorted(items.items())
             if item_id.startswith("bible/characters/")
         ],
-        "next": _next_step(stage),
+        "next": _next_step(stage, project_dir, knowledge_dir),
         # Во сколько обойдётся готовое видео — вопрос, который задают ДО
         # раскадровки, и ответ на него у панели есть: длительность из брифа и
         # выбранные модели. Непосчитанный прогноз — не ошибка проекта: в брифе
@@ -225,7 +225,9 @@ def _episode_duration(project_dir: Path, project, episode: str,
     return duration
 
 
-def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
+def _next_step(stage: tuple[str, str | None] | None,
+               project_dir: Path | None = None,
+               knowledge_dir: Path | str = Path("knowledge")) -> dict | None:
     """Следующий шаг конвейера вместе с тем, ЧЕМ его запускать.
 
     Резолвер (`preprod.next_stage`) отвечает «что дальше», а панели нужно ещё и
@@ -251,7 +253,15 @@ def _next_step(stage: tuple[str, str | None] | None) -> dict | None:
         # Резолвер вернул шаг, которого панель запускать не умеет. Молча
         # спрятать кнопку значит соврать, что делать нечего.
         kind = "unknown"
+    # Сколько единиц осталось — только у платных стадий и только когда есть по
+    # чему считать. Прерванная съёмка запускается снова и доснимает остаток;
+    # без числа подпись «раскадровка» во второй раз читается как «всё заново».
+    remaining = None
+    if kind == "paid" and project_dir is not None and episode:
+        from factory.estimate import remaining_units
+        remaining = remaining_units(project_dir, episode, run, knowledge_dir)
     return {"stage": name, "episode": episode, "kind": kind, "run": run,
+            "remaining": remaining,
             "label": STAGE_LABELS.get(name, name)}
 
 
@@ -339,6 +349,20 @@ def review_action(project_dir: Path, item_id: str, action: str,
         fields["reject_reason"] = reason.strip()
     elif action == "accept-notes" and reason:
         fields["notes"] = reason.strip()
+
+    # Принять уже принятое — не ошибка, а совпадение желаний. Панель показывает
+    # СНИМОК состояния, а принимать может и автономный режим: клик по
+    # устаревшему списку отвечал «done -> done is not allowed», то есть пугал
+    # человека там, где всё в порядке (живой прогон 2026-09-10). Отклонение
+    # принятого так НЕ прощается: это смена решения, и путь у неё через
+    # `requeue` — иначе оплаченная картинка молча уедет в брак.
+    try:
+        current = manifest.get(item_id)["status"]
+    except ManifestError as e:
+        raise WebappError(str(e)) from None
+    if action == "accept" and current == REVIEW_ACTIONS["accept"]:
+        return manifest.get(item_id)
+
     try:
         manifest.set_status(item_id, REVIEW_ACTIONS[action], **fields)
     except ManifestError as e:

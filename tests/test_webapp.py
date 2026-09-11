@@ -1005,3 +1005,64 @@ def test_review_all_touches_only_this_episode(root):
 
 def test_review_all_on_empty_queue_is_not_an_error(root):
     assert webapp.review_all(root / "pilot", "ep01", "accept")["count"] == 0
+
+
+def test_accepting_what_is_already_accepted_is_not_an_error(root):
+    """Панель показывает СНИМОК, а принять могли уже — и не человек.
+
+    В автономном режиме кадры принимает сам режим, и клик по устаревшему списку
+    отвечал «done -> done is not allowed»: пугающая ошибка на месте «уже
+    принято» (живой прогон 2026-09-10).
+    """
+    _generated(root, "ep01/storyboard/001")
+    webapp.review_action(root / "pilot", "ep01/storyboard/001", "accept", None)
+
+    again = webapp.review_action(root / "pilot", "ep01/storyboard/001",
+                                 "accept", None)
+
+    assert again["status"] == "done"
+
+
+def test_accept_all_skips_what_is_already_accepted(root):
+    _generated(root, "ep01/storyboard/001", "ep01/storyboard/002")
+    webapp.review_action(root / "pilot", "ep01/storyboard/001", "accept", None)
+
+    result = webapp.review_all(root / "pilot", "ep01", "accept")
+
+    assert result["count"] == 1, "второй раз принимать нечего"
+
+
+def test_rejecting_an_accepted_unit_is_still_refused(root):
+    """Отклонить принятое — не опечатка, а смена решения: путь через requeue."""
+    _generated(root, "ep01/storyboard/001")
+    webapp.review_action(root / "pilot", "ep01/storyboard/001", "accept", None)
+
+    with pytest.raises(webapp.WebappError):
+        webapp.review_action(root / "pilot", "ep01/storyboard/001", "reject",
+                             "не нравится")
+
+
+def test_remaining_units_counts_what_is_left_for_that_stage(root):
+    """Кнопка обязана называть остаток: прерванная съёмка не начинается заново."""
+    from factory import estimate
+
+    assert estimate.remaining_units(root / "pilot", "ep01", "storyboard",
+                                    KNOWLEDGE) == 2
+
+    manifest = Manifest(root / "pilot" / "manifest.json")
+    manifest.add("ep01/storyboard/001", "frame")
+    manifest.set_status("ep01/storyboard/001", "generating")
+    manifest.set_status("ep01/storyboard/001", "generated")
+    manifest.set_status("ep01/storyboard/001", "done")
+    manifest.save()
+
+    assert estimate.remaining_units(root / "pilot", "ep01", "storyboard",
+                                    KNOWLEDGE) == 1
+
+
+def test_remaining_units_says_nothing_about_stages_without_units(root):
+    """У монтажа единиц нет — выдуманный ноль соврал бы, что работы не осталось."""
+    from factory import estimate
+
+    assert estimate.remaining_units(root / "pilot", "ep01", "render",
+                                    KNOWLEDGE) is None
