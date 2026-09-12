@@ -3,12 +3,17 @@ id: mmaudio_v2
 type: audio
 audio_kind: foley
 family: mmaudio
-status: skeleton          # цена из каталога WaveSpeed ($0.001), живой генерацией НЕ подтверждена
+status: catalog           # путь, поля и цена сверены по каталогу WaveSpeed 2026-09-12; ЖИВОЙ ГЕНЕРАЦИИ НЕ БЫЛО — решение тратить принято человеком 2026-09-12
 output_format: mp4
 cost_tier: low
+max_duration_sec: 30      # схема: duration 1..30, по умолчанию 8
 providers:
-  # ⚠️ Закомментировано до живой генерации — см. mirelo_sfx_16.
-  # wavespeed: { id: "wavespeed-ai/mmaudio-v2", usd_per_image: 0.001, fields: { prompt: prompt, video: video, duration: duration } }
+  # Цена считается ЗА СЕКУНДУ, хотя каталог печатает base_price 0.001 плоско.
+  # Урок mirelo_sfx_16 (2026-09-05): там ровно такое прочтение занизило смету
+  # эпизода впятеро — $0.78 по факту против $0.05 в смете. Пока не замерено,
+  # берём дороже: 8-секундный отрезок выходит в $0.008 вместо $0.001, и ошибка
+  # в эту сторону стоит копейки, а в обратную — доверия к смете.
+  wavespeed: { id: "wavespeed-ai/mmaudio-v2", usd_per_sec: 0.001, fields: { prompt: prompt, video: video, duration: duration } }
 ---
 
 # MMAudio v2 — фоли по готовому видео

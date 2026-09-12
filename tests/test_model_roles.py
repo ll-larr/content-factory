@@ -67,42 +67,135 @@ def test_candidates_match_the_role_kind(project):
                 assert card["audio_kind"] == spec["kind"], candidate
 
 
-def test_skeleton_is_visible_but_not_selectable(project):
+def test_skeleton_is_visible_but_not_selectable(project, tmp_path):
     """Спрятать — скрыть, что модель существует; разрешить — обойти гейт трат.
 
     У такой карточки блоки `providers` закрыты комментарием (правило CLAUDE.md),
     поэтому она попадает в список одной строкой без провайдера и с причиной.
+    Карточка пишется в КОПИЮ knowledge: в репозитории скелетов не осталось —
+    все открыты по каталогу 2026-09-12, — а поведение гейта от этого не
+    изменилось.
     """
-    seen = [c for row in _roles(project).values()
+    import shutil
+
+    kdir = tmp_path / "knowledge"
+    shutil.copytree(KNOWLEDGE, kdir)
+    (kdir / "video" / "скелет.md").write_text('---\nid: скелет\ntype: video\nfamily: тест\nstatus: skeleton\n---\n\n# Скелет\n', encoding="utf-8")
+
+    rows = {row["role"]: row for row in webapp.model_roles(project, kdir)}
+    seen = [c for row in rows.values()
             for c in row["candidates"] if c["status"] == "skeleton"]
 
-    assert seen, "в knowledge нет ни одной skeleton-карточки — тест бессмыслен"
+    assert seen, "скелет пропал из списка — значит от человека спрятали модель"
     assert all(c["selectable"] is False for c in seen)
-    assert all(c["reason"] for c in seen)
     # Невыбираемое ВСЕГДА объясняет себя: молчаливо серая строка ничем не
     # отличается от ошибки панели.
-    assert all(c["reason"] for row in _roles(project).values()
+    assert all(c["reason"] for row in rows.values()
                for c in row["candidates"] if not c["selectable"])
+
+
+def test_every_role_has_something_to_choose(project):
+    """У каждой роли конвейера есть хоть одна выбираемая модель.
+
+    Роль, в которой всё серое (так было у фоли и липсинка до 2026-09-12),
+    выглядит как сломанная панель: выпадающий список пуст, а почему — написано
+    в свёрнутом блоке, куда не заглядывают.
+    """
+    for role, row in _roles(project).items():
+        assert any(c["selectable"] for c in row["candidates"]), role
+
+
+def test_price_says_what_it_is_for(project):
+    """Число без единицы обманывает: секунда звука и кадр — разные деньги.
+
+    До 2026-09-12 звук считался за НОЛЬ секунд, и панель показывала «$0.0000»
+    у модели по цене цента за секунду. Бесплатных моделей не бывает.
+    """
+    roles = _roles(project)
+    sfx = next(c for c in roles["audio.sfx"]["candidates"]
+               if c["model"] == "mirelo_sfx_16")
+    frame = next(c for c in roles["image"]["candidates"]
+                 if c["model"] == "z_image_turbo")
+
+    assert sfx["price"] > 0 and sfx["price_unit"] == "с"
+    assert frame["price_unit"] == "кадр"
+    assert roles["video"]["candidates"][0]["price_unit"] == "отрезок"
 
 
 def test_model_that_cannot_hold_the_segment_is_not_offered(project):
     """Панель не предлагает то, что запись выбора немедленно отобьёт.
 
-    `veo3_1_lite` принимает 4, 6 и 8 секунд; у проекта отрезок 5 — карточка
+    `veo3_1` принимает 4, 6 и 8 секунд; у проекта отрезок 5 — карточка
     формально открыта, но недостижима. Раньше такую можно было выбрать и
     получить отказ уже после клика.
     """
     row = _roles(project)["video"]
-    candidate = next(c for c in row["candidates"]
-                     if c["model"] == "veo3_1_lite")
+    candidate = next(c for c in row["candidates"] if c["model"] == "veo3_1")
 
     assert candidate["selectable"] is False
     assert "5s" in candidate["reason"] or "duration" in candidate["reason"]
 
     with pytest.raises(webapp.WebappError):
         webapp.set_project_models(
-            project, {"video": {"model": "veo3_1_lite", "provider": "openrouter"}},
+            project, {"video": {"model": "veo3_1", "provider": "wavespeed"}},
             KNOWLEDGE)
+
+
+def test_one_row_per_model_at_the_cheapest_provider(project):
+    """Одна модель у двух провайдеров — это два ценника, а не два выбора.
+
+    `vidu_q2_turbo` стоит $0.11 на Runware и $0.20 на WaveSpeed; дороже берут
+    ровно тогда, когда не заметили дешевле.
+    """
+    row = _roles(project)["video"]
+    vidu = [c for c in row["candidates"] if c["model"] == "vidu_q2_turbo"]
+
+    assert len(vidu) == 1
+    assert vidu[0]["provider"] == "runware"
+    models = [c["model"] for c in row["candidates"]]
+    assert len(models) == len(set(models))
+
+
+def test_the_current_choice_survives_even_if_it_is_dearer(project):
+    """Иначе список показывал бы не то, что записано в брифе."""
+    webapp.set_project_models(
+        project, {"video": {"model": "vidu_q2_turbo", "provider": "wavespeed"}},
+        KNOWLEDGE)
+    vidu = [c for c in _roles(project)["video"]["candidates"]
+            if c["model"] == "vidu_q2_turbo"]
+
+    assert {c["provider"] for c in vidu} == {"runware", "wavespeed"}
+    kept = next(c for c in vidu if c["provider"] == "wavespeed")
+    assert kept["current"] is True, "вторая строка обязана назвать себя текущей"
+
+
+def test_model_without_end_frame_support_is_still_offered(project):
+    """Стык кадров необязателен (2026-09-03) — и выбор он не запрещает.
+
+    Пока гейт требовал start/end всегда, панель отказывала моделям, которые
+    делают ровно ту работу, какую конвейер им и даёт. Панель теперь не молчит
+    об ограничении: строка помечена `start_end: False`, а откажет такой выбор
+    только на плане со стыками — гейтом платной стадии, до траты.
+    """
+    row = _roles(project)["video"]
+    candidate = next(c for c in row["candidates"]
+                     if c["model"] == "grok_video_v15")
+
+    assert candidate["start_end"] is False
+    assert candidate["selectable"] is True
+    webapp.set_project_models(
+        project, {"video": {"model": "grok_video_v15", "provider": "wavespeed"}},
+        KNOWLEDGE)
+
+
+def test_image_model_without_refs_says_so(project):
+    """Кадр по референсу персонажа умеет не всякая модель картинок."""
+    row = _roles(project)["image"]
+    grok = next(c for c in row["candidates"] if c["model"] == "grok_image")
+    flux = next(c for c in row["candidates"] if c["model"] == "flux_2_klein")
+
+    assert grok["refs"] is False and grok["selectable"] is True
+    assert flux["refs"] is True
 
 
 def test_the_same_verdict_answers_both_questions(project):
@@ -174,17 +267,26 @@ def test_audio_role_lands_under_models_audio(project):
     assert data["models"]["audio"]["tts"]["model"] == "gemini_2_5_pro_tts"
 
 
-def test_skeleton_model_is_refused_before_it_reaches_the_brief(project):
-    from factory.models import all_cards
+def test_skeleton_model_is_refused_before_it_reaches_the_brief(project, tmp_path):
+    """Скелет не попадает в бриф даже прямым запросом.
 
-    skeleton = next(c for c in all_cards(KNOWLEDGE)
-                    if c["type"] == "video"
-                    and str(c["status"]).startswith("skeleton"))
+    Карточка пишется в КОПИЮ knowledge: в самом репозитории видео-скелетов
+    больше нет (открыты по каталогу 2026-09-12), а проверять гейт на живом
+    наборе карточек значило бы отменять тест каждый раз, когда открывают
+    очередную модель.
+    """
+    import shutil
+
+    kdir = tmp_path / "knowledge"
+    shutil.copytree(KNOWLEDGE, kdir)
+    (kdir / "video" / "скелет.md").write_text(
+        "---\nid: скелет\ntype: video\nfamily: тест\nstatus: skeleton\nproviders:\n  wavespeed: {id: 'x/y', pricing: flat, usd_per_sec: 0.01}\n---\n\n# Скелет\n",
+        encoding="utf-8")
 
     with pytest.raises(webapp.WebappError):
         webapp.set_project_models(
-            project, {"video": {"model": skeleton["id"], "provider": "wavespeed"}},
-            KNOWLEDGE)
+            project, {"video": {"model": "скелет", "provider": "wavespeed"}},
+            kdir)
     data = json.loads((project / "project.json").read_text("utf-8"))
     assert data["models"]["video"]["model"] == "vidu_q2_turbo"
 

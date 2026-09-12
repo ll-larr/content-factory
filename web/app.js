@@ -995,7 +995,12 @@ async function renderModels() {
   // правка усилия затирала бы выбранную модель.
   state.textChoice = text ? {engine: text.engine, model: text.model,
                              effort: text.effort} : null;
-  const price = (v) => v === null || v === undefined ? "—" : "$" + Number(v).toFixed(4);
+  // Цена без единицы обманывает: у звука по секунде «$0.0100» и у кадра
+  // «$0.0100» — разные деньги. Ноль знаков после точки не режем: $0.005 и
+  // $0.0017 отличаются втрое, а округлённые до цента оба станут «$0.01».
+  const price = (v, unit) => v === null || v === undefined
+    ? "цена неизвестна"
+    : "$" + Number(v).toFixed(4) + (unit ? " / " + unit : "");
   const key = (c) => `${c.model}|${c.provider || ""}`;
 
   $("#tab-models").innerHTML = `
@@ -1015,9 +1020,17 @@ async function renderModels() {
             ${c.selectable ? "" : "disabled"}
             ${c.model === r.current.model && c.provider === r.current.provider
               ? " selected" : ""}
-            >${esc(c.model)}${c.provider ? " · " + esc(c.provider) : ""} · ${price(c.price)}${
-              c.selectable ? "" : " · " + esc(c.status)}${
-              c.native_audio ? " · со своим звуком" : ""}</option>`).join("")}
+            title="${esc(c.reason || c.status)}"
+            >${esc(c.model)}${c.provider ? " · " + esc(c.provider) : ""} · ${price(c.price, c.price_unit)}${
+              // Статус показываем, только когда он что-то меняет: `verified` у
+              // серой строки читался как «проверено, но почему-то нельзя».
+              // Почему нельзя — это причина, и её место здесь, а не статуса.
+              c.selectable ? (c.status === "verified" ? "" : " · " + esc(c.status))
+                           : " · НЕЛЬЗЯ"}${
+              c.current ? " · выбрано сейчас" : ""}${
+              c.native_audio ? " · со своим звуком" : ""}${
+              c.start_end === false ? " · без стыка кадров" : ""}${
+              c.refs === false ? " · без референсов" : ""}</option>`).join("")}
         </select>
         <span class="muted mrole-now">${r.current.model
           ? esc(r.current.model) + " · " + esc(r.current.provider || "—")

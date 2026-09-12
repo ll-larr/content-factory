@@ -108,13 +108,23 @@ def _status_problems(card: dict) -> list[str]:
 
 
 def validate_video_model(card: dict, segment_seconds: int,
-                         provider: str | None = None) -> list[str]:
+                         provider: str | None = None,
+                         needs_end_frame: bool = False) -> list[str]:
     """Спека §6: валидация выбора модели ДО траты денег.
 
     Если задан ``provider`` И в карте есть блок ``providers`` — проверяем
-    возможности (start/end, сетку длительностей) ПОД ВЫБРАННОГО провайдера.
+    возможности (end-кадр, сетку длительностей) ПОД ВЫБРАННОГО провайдера.
     Без ``provider`` (или если в карте нет ``providers``) — legacy-поведение
     по top-level полям карточки.
+
+    ``needs_end_frame`` — есть ли в ПЛАНЕ хоть один отрезок со стыком кадров.
+    Спрашивается у плана, а не у модели, потому что `end_frame` необязателен с
+    2026-09-03: отрезок живёт внутри одного плана, стык делает монтаж. Пока
+    поддержка end-кадра требовалась всегда, гейт отказывал моделям, которые
+    делают ровно ту работу, какую конвейер им и даёт (grok, hailuo, kling-std),
+    — то есть защищал от схемы, от которой сам конвейер уже отказался. Панель
+    плана не знает и спрашивает без него: там вопрос «можно ли выбрать», а
+    несовместимость со стыком всплывёт гейтом платной стадии, до траты.
     """
     problems: list[str] = []
     if card["type"] != "video":
@@ -137,10 +147,10 @@ def validate_video_model(card: dict, segment_seconds: int,
         allowed = card.get("allowed_durations")
         max_clip = card.get("max_clip_seconds", 0)
 
-    if not supports:
+    if needs_end_frame and not supports:
         problems.append(
-            f"{card['id']}: no start/end frame support — "
-            "segment chaining (спека §4) will break")
+            f"{card['id']}: no end frame support on provider {provider!r} — "
+            "в плане есть отрезки со стыком кадров (end_frame)")
     if max_clip is not None and max_clip < segment_seconds:
         problems.append(
             f"{card['id']}: max clip {max_clip}s "
@@ -153,17 +163,28 @@ def validate_video_model(card: dict, segment_seconds: int,
     return problems
 
 
-def validate_image_model(card: dict, provider: str | None = None) -> list[str]:
+def validate_image_model(card: dict, provider: str | None = None,
+                         needs_refs: bool = False) -> list[str]:
     """Гейт трат для раскадровки (image), симметрично ``validate_video_model``.
 
     Картинкам не нужны start/end-сцепка и сетка длительностей — проверяем тип,
     доступность под выбранного провайдера (если задан И в карте есть ``providers``)
     и статус ``skeleton`` (маппинг провайдера не подтверждён живьём → не тратить).
+
+    ``needs_refs`` — есть ли в ПЛАНЕ кадр с референсами. Вопрос задаётся плану,
+    как и про end-кадр у видео: модель без входных картинок (grok-imagine
+    text-to-image) годится для фона и предмета, но не для лица сериала, и
+    выяснить это нужно ДО сметы, а не отказом провайдера на середине батча.
+    Поле ``supports_refs`` необязательно: не объявлено — считаем, что принимает.
     """
     problems: list[str] = []
     if card["type"] != "image":
         problems.append(f"{card['id']}: not an image model")
         return problems
+
+    if needs_refs and card.get("supports_refs") is False:
+        problems.append(
+            f"{card['id']}: не принимает референсы, а в плане есть кадры с refs")
 
     providers = card.get("providers")
     if provider is not None and providers is not None:

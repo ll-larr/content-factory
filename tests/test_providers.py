@@ -856,6 +856,71 @@ def test_ws_omit_style_drops_resolution_and_aspect(tmp_path, monkeypatch):
     assert captured["body"]["duration"] == 5
 
 
+WS_MAP_STYLE = """---
+id: h3_test
+type: video
+status: catalog
+providers:
+  wavespeed:
+    id: "wavespeed-ai/minimax-h3/image-to-video"
+    supports_start_end: true
+    omit_aspect_ratio: true
+    resolution_style: map
+    resolution_map: {720p: 768p, 1080p: 1080p}
+    pricing: flat
+    usd_per_sec: 0.04
+---
+# h3 map-style
+"""
+
+
+def _ws_video(tmp_path, text, mid):
+    d = tmp_path / "knowledge" / "video"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{mid}.md").write_text(text, encoding="utf-8")
+    return WaveSpeedProvider(knowledge_dir=tmp_path / "knowledge")
+
+
+def test_ws_map_style_translates_resolution_by_the_card(tmp_path, monkeypatch):
+    """У minimax-h3 своя сетка (480p/540p/768p/1080p), 720p в ней нет.
+
+    Соответствие объявляет карточка: «ближайшее» за модель адаптер выдумывать
+    не имеет права, а промолчать значило бы снять 480p по цене заказанного.
+    """
+    p = _ws_video(tmp_path, WS_MAP_STYLE, "h3_test")
+    c = _captured_submit(p, monkeypatch, "h3_test",
+                         {"prompt": "x", "duration": 5, "resolution": "720p",
+                          "aspect_ratio": "16:9",
+                          "start_frame": "http://x/a.png"})
+    assert c["body"]["resolution"] == "768p"
+    # aspect_ratio у h3 в схеме нет вовсе, а схемы строгие: лишнее поле — HTTP 400
+    assert "aspect_ratio" not in c["body"]
+
+
+def test_ws_map_style_unknown_resolution_is_refused_before_the_network(
+        tmp_path, monkeypatch):
+    p = _ws_video(tmp_path, WS_MAP_STYLE, "h3_test")
+    monkeypatch.setattr(p, "_request", lambda *a, **k: {"data": {"id": "t"}})
+    with pytest.raises(ProviderError, match="resolution_style=map"):
+        p.submit("h3_test", {"prompt": "x", "resolution": "4k",
+                             "start_frame": "http://x/a.png"})
+
+
+def test_ws_preflight_catches_resolution_before_the_estimate(tmp_path):
+    """Смета не должна обещать цену за вызов, который сабмит не выполнит."""
+    p = _ws_video(tmp_path, WS_MAP_STYLE, "h3_test")
+    assert p._provider_preflight("h3_test", {"resolution": "720p"}) == []
+    problems = p._provider_preflight("h3_test", {"resolution": "4k"})
+    assert problems and "4k" in problems[0]
+
+
+def test_ws_preflight_is_silent_about_a_card_of_another_provider(tmp_path):
+    """Про «карточка не знает этого провайдера» уже сказал валидатор карточки."""
+    card = WS_MAP_STYLE.replace("wavespeed:", "runware:")
+    p = _ws_video(tmp_path, card, "h3_test")
+    assert p._provider_preflight("h3_test", {"resolution": "720p"}) == []
+
+
 # --- аудио на WaveSpeed: поля запроса берутся из карточки (дизайн 2026-09-04 §4) ---
 
 AUDIO_CARD = """---

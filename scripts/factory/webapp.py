@@ -1150,22 +1150,39 @@ def _role_current(project, role: str) -> dict:
         return {"model": None, "provider": None, "tier": None}
 
 
-def _card_price(card: dict, provider: str, project) -> float | None:
-    """Цена карточки под ЭТОТ проект: его разрешение и длительность отрезка.
+def _card_price(card: dict, provider: str, project) -> tuple[float | None, str]:
+    """Цена карточки под ЭТОТ проект и ЗА ЧТО она — числом и единицей.
 
     Считается тем же `estimate_media_cost`, что и смета: показать в выборе одно
     число, а в смете другое — значит выбрать модель по цене, которой нет.
+
+    Единица обязательна, потому что у ролей она разная. У звука по секунде
+    (`mirelo_sfx_16` — $0.01/с, замерено) панель спрашивала цену за НОЛЬ секунд
+    и честно показывала «$0.0000»: бесплатной модели не бывает, и такое число
+    читается как поломка. Длительности звука до плана нет — показываем цену
+    секунды и так и подписываем.
     """
     from factory.models import ModelError, estimate_media_cost
 
     pv = (card.get("providers") or {}).get(provider) or {}
     tier = pv.get("default_tier")
-    duration = project.segment_seconds if card.get("type") == "video" else 0
+    entry = (pv.get("tiers") or {}).get(tier, pv) if pv.get("tiers") else pv
+    kind = card.get("type")
+
+    if kind == "video":
+        duration, unit = project.segment_seconds, "отрезок"
+    elif kind == "image":
+        duration, unit = 0, "кадр"
+    elif entry.get("usd_per_sec", pv.get("usd_per_sec")) is not None:
+        duration, unit = 1, "с"          # цена СЕКУНДЫ звука
+    else:
+        duration, unit = 0, "вызов"
+
     try:
-        return estimate_media_cost(card, provider, project.resolution,
-                                   duration, tier)
+        return (estimate_media_cost(card, provider, project.resolution,
+                                    duration, tier), unit)
     except (ModelError, KeyError, TypeError, ValueError):
-        return None
+        return (None, unit)
 
 
 def _role_problems(card: dict, spec: dict, provider: str, project) -> list[str]:
@@ -1183,6 +1200,44 @@ def _role_problems(card: dict, spec: dict, provider: str, project) -> list[str]:
     if spec["type"] == "video":
         return validate_video_model(card, project.segment_seconds, provider)
     return validate_audio_model(card, provider, spec["kind"])
+
+
+def _one_row_per_model(candidates: list[dict], current: dict) -> list[dict]:
+    """Одна строка на модель — у самого дешёвого провайдера.
+
+    Один и тот же `vidu_q2_turbo` у двух провайдеров — это не два выбора, а два
+    ценника на одну работу: дороже берут ровно тогда, когда не заметили дешевле.
+    Поэтому провайдера выбирает цена, а не человек.
+
+    Два исключения, оба про честность списка:
+    - выбираемое бьёт дешёвое. Строка, которую гейт всё равно отобьёт (сетка
+      длительностей, чужой провайдер), не должна прятать ту, на которой реально
+      можно снимать;
+    - ТЕКУЩИЙ выбор остаётся всегда, даже если он дороже: иначе выпадающий
+      список показывал бы не то, что записано в брифе.
+    """
+    def rank(c: dict) -> tuple:
+        # Цены нет (skeleton без провайдеров) — в конец: сравнивать нечего.
+        return (not c["selectable"], c["price"] is None, c["price"] or 0.0,
+                c["provider"] or "")
+
+    best: dict[str, dict] = {}
+    for c in candidates:
+        chosen = best.get(c["model"])
+        if chosen is None or rank(c) < rank(chosen):
+            best[c["model"]] = c
+
+    rows = list(best.values())
+    picked = {(c["model"], c["provider"]) for c in rows}
+    for c in candidates:
+        if ((c["model"], c["provider"]) == (current.get("model"),
+                                            current.get("provider"))
+                and (c["model"], c["provider"]) not in picked):
+            # Вторая строка той же модели бывает ровно одна и ровно поэтому:
+            # так записано в брифе. Она себя и называет, иначе читалась бы как
+            # тот самый дубль, ради которого список и схлопнули.
+            rows.append({**c, "current": True})
+    return rows
 
 
 def model_roles(project_dir: Path,
@@ -1227,7 +1282,7 @@ def model_roles(project_dir: Path,
                 # существует; поэтому она в списке одной строкой и с причиной.
                 candidates.append({
                     "model": card["id"], "provider": None, "status": status,
-                    "selectable": False, "price": None,
+                    "selectable": False, "price": None, "price_unit": "",
                     "native_audio": bool(card.get("native_audio")),
                     "reason": "в карточке не объявлен ни один провайдер — "
                               "брать нечего, пока не будет живой пробы",
@@ -1239,24 +1294,40 @@ def model_roles(project_dir: Path,
                 # проверки здесь нет: предложить в списке то, что запись потом
                 # отобьёт, значит дать человеку выбрать несуществующее.
                 problems = _role_problems(card, spec, provider, project)
+                price, price_unit = _card_price(card, provider, project)
                 candidates.append({
                     "model": card["id"],
                     "provider": provider,
                     "status": status,
                     "selectable": not problems,
-                    "price": _card_price(card, provider, project),
+                    "price": price,
+                    "price_unit": price_unit,
                     # У видеомодели со своим звуком отрезок приходит с готовой
                     # дорожкой. Панель это показывает, потому что от этого
                     # зависит, нужен ли фоли отдельной генерацией.
                     "native_audio": bool(card.get("native_audio")),
+                    # Стык кадров (end_frame) — НЕ условие выбора: он
+                    # необязателен с 2026-09-03. Но раскадровка, где стыки
+                    # есть, на такой модели откажет гейтом платной стадии,
+                    # поэтому панель говорит об этом заранее, а не молчит.
+                    # Референсы — то же самое у кадров. Вопрос, которого у роли
+                    # нет, остаётся None: «нет стыка кадров» на модели картинок
+                    # значило бы ровно ничего.
+                    "start_end": (
+                        bool((card.get("providers") or {}).get(provider, {})
+                             .get("supports_start_end"))
+                        if spec["type"] == "video" else None),
+                    "refs": (card.get("supports_refs") is not False
+                             if spec["type"] == "image" else None),
                     "reason": "; ".join(problems),
                 })
 
+        current = _role_current(project, role)
         rows.append({
             "role": role, "label": spec["label"], "note": spec["note"],
-            "current": _role_current(project, role),
-            "candidates": sorted(candidates,
-                                 key=lambda c: (c["model"], c["provider"])),
+            "current": current,
+            "candidates": sorted(_one_row_per_model(candidates, current),
+                                 key=lambda c: (c["model"], c["provider"] or "")),
         })
     return rows
 

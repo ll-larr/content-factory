@@ -84,7 +84,14 @@ def test_validate_flags_problems(tmp_path):
               .replace("max_clip_seconds: 10", "max_clip_seconds: 4")
     card = load_card(write_card(tmp_path, bad) / "video" / "kling-2.0.md")
     problems = validate_video_model(card, segment_seconds=5)
-    assert len(problems) == 3  # нет start/end, клип короче отрезка, карточка-скелет
+    assert len(problems) == 2  # клип короче отрезка, карточка-скелет
+
+    # Отсутствие end-кадра — проблема ТОЛЬКО там, где план просит стык:
+    # `end_frame` необязателен с 2026-09-03, и требовать его у модели всегда
+    # значило бы запрещать работу, которую конвейер ей и даёт.
+    with_end = validate_video_model(card, segment_seconds=5, needs_end_frame=True)
+    assert len(with_end) == 3
+    assert any("end frame" in p for p in with_end)
 
 
 def test_unclosed_frontmatter_raises_model_error(tmp_path):
@@ -335,10 +342,19 @@ def test_validate_provider_ok():
     assert validate_video_model(PROVIDER_CARD, segment_seconds=8, provider="runware") == []
 
 
-def test_validate_provider_no_start_end_flagged():
-    """У wavespeed нет start/end — проблема под этим провайдером."""
-    problems = validate_video_model(PROVIDER_CARD, segment_seconds=5, provider="wavespeed")
-    assert any("start/end" in p for p in problems)
+def test_validate_provider_no_end_frame_flagged_only_when_the_plan_needs_it():
+    """У wavespeed нет end-кадра: беда — только для плана со стыками.
+
+    План без стыков такой моделью снимается: отрезок живёт внутри одного плана
+    (решение 2026-09-03), а стык делает монтаж.
+    """
+    assert not [p for p in validate_video_model(
+        PROVIDER_CARD, segment_seconds=5, provider="wavespeed")
+        if "end frame" in p]
+
+    problems = validate_video_model(PROVIDER_CARD, segment_seconds=5,
+                                    provider="wavespeed", needs_end_frame=True)
+    assert any("end frame" in p for p in problems)
 
 
 def test_validate_provider_duration_not_in_grid():
