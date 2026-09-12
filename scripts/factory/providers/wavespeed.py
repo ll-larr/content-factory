@@ -88,6 +88,12 @@ class WaveSpeedProvider(BaseHTTPProvider):
     _K_NATIVE = {"0.5k", "1k", "2k", "4k"}
 
     def _apply_resolution_style(self, pv: dict, body: dict) -> None:
+        # Схемы WaveSpeed строгие (`additionalProperties: false`): поле, которого
+        # у модели нет, — это HTTP 400, а не игнор. Конвейер шлёт aspect_ratio
+        # всегда, а у grok-видео и minimax-h3 его в схеме нет вовсе, поэтому
+        # выброс объявляется В КАРТОЧКЕ, а не угадывается по id модели.
+        if pv.get("omit_aspect_ratio"):
+            body.pop("aspect_ratio", None)
         style = pv.get("resolution_style")
         if not style:
             return
@@ -102,6 +108,19 @@ class WaveSpeedProvider(BaseHTTPProvider):
                     f"resolution_style=size: нет маппинга для "
                     f"({resolution!r}, {aspect!r}); известны {sorted(self._SIZE_TABLE)}")
             body["size"] = size
+        elif style == "map":
+            # Сетка разрешений модели не совпадает с нашей (minimax-h3 знает
+            # 480p/540p/768p/1080p, но не 720p). Соответствие объявляется
+            # карточкой: выдумывать «ближайшее» за модель адаптер не имеет права,
+            # а промолчать — значит заплатить за 480p, заказав 720p.
+            table = pv.get("resolution_map") or {}
+            if resolution is None:
+                return
+            if resolution not in table:
+                raise WaveSpeedError(
+                    f"resolution_style=map: в карточке нет соответствия для "
+                    f"{resolution!r}; объявлены {sorted(table)}")
+            body["resolution"] = table[resolution]
         elif style == "k":
             if resolution in self._K_NATIVE:
                 body["resolution"] = resolution
@@ -113,7 +132,42 @@ class WaveSpeedProvider(BaseHTTPProvider):
                     f"жду {sorted(self._K_NATIVE | set(self._K_TABLE))}")
         else:
             raise WaveSpeedError(
-                f"неизвестный resolution_style {style!r} (знаю: size, k, omit)")
+                f"неизвестный resolution_style {style!r} (знаю: size, k, map, omit)")
+
+    def _provider_preflight(self, model: str, params: dict) -> list[str]:
+        """Разрешение, которое submit не сможет отправить, ловим ДО сметы.
+
+        Тот же мотив, что у Runware: смета не должна обещать цену за работу,
+        которую сабмит отобьёт. Проверяется по тем же таблицам, которыми
+        `_apply_resolution_style` собирает тело, — второй таблицы здесь нет.
+        """
+        try:
+            card = self._card(model)
+            pv = self._pv(card)
+        except ProviderError:
+            # «Карточка не знает этого провайдера» — ответ валидатора карточки,
+            # и он уже сказан выше. Дублировать его своими словами значит
+            # объяснять одну беду дважды.
+            return []
+        style = pv.get("resolution_style")
+        resolution = params.get("resolution")
+        if not resolution or style in (None, "omit"):
+            return []
+        if style == "size":
+            aspect = params.get("aspect_ratio") or "16:9"
+            if (resolution, aspect) not in self._SIZE_TABLE:
+                return [f"WaveSpeed: нет размера для ({resolution!r}, {aspect!r}); "
+                        f"замаплены {sorted(self._SIZE_TABLE)}"]
+        elif style == "k":
+            if resolution not in self._K_NATIVE and resolution not in self._K_TABLE:
+                return [f"WaveSpeed: неизвестное разрешение {resolution!r}; "
+                        f"жду {sorted(self._K_NATIVE | set(self._K_TABLE))}"]
+        elif style == "map":
+            table = pv.get("resolution_map") or {}
+            if resolution not in table:
+                return [f"WaveSpeed: в карточке {card['id']} нет соответствия "
+                        f"для разрешения {resolution!r}; объявлены {sorted(table)}"]
+        return []
 
     # ---- аудио (v3 JSON, поля из карточки) ----
     # Параметры, значение которых — медиа: локальный путь кодируется в data-URI,

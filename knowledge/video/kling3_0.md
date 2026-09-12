@@ -2,26 +2,24 @@
 id: kling3_0
 type: video
 family: kling
-status: verified          # WaveSpeed std подтверждён живьём 2026-07-08 (5с start+end_image, $0.42 сверено списанием, интерполяция ✓); pro/OpenRouter/Runware НЕ проверены
+status: verified          # WaveSpeed std подтверждён живьём 2026-07-08 (5с start+end_image, $0.42 сверено списанием, интерполяция ✓); тир pro открыт 2026-09-12 ПО КАТАЛОГУ решением человека, живьём НЕ проверен; OpenRouter/Runware НЕ проверены
 supports_start_end_frame: true
 native_audio: true
-max_clip_seconds: 10
+max_clip_seconds: 15
+max_duration_sec: 15          # предел ОДНОГО вызова: duration enum 3..15 (каталог 2026-09-12)
 aspect_ratios: ["16:9","9:16","1:1"]
 cost_tier: medium
 providers:                # flat: цена НЕ зависит от разрешения (FINAL §3.2) — дёшев на 1080p
   wavespeed:
     supports_start_end: true
+    max_clip_seconds: 15      # схема каталога 2026-09-12: duration enum 3..15
     resolution_style: omit   # схема kling БЕЗ resolution/aspect_ratio (2026-07-08) — не слать, что шлёт конвейер
     pricing: flat
     tiers:
       std: { id: "kwaivgi/kling-v3.0-std/image-to-video", usd_per_sec: 0.084 }  # живьём 2026-07-08: end_image принят, $0.42/5с; формула каталога base*duration/5*(sound?1.5:1); duration 3..15; resolution НЕ слать (нет в схеме)
-      # pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.168 }  # ОТКЛЮЧЁН: id из каталога, цена — догадка (ровно 2x от std), живой генерацией не проверена
-      # --- turbo-ветка, каталог WaveSpeed 2026-09-04, живой генерацией НЕ проверена ---
-      # Вчетверо дешевле std при том же семействе: $0.112 против $0.42 за
-      # генерацию. Если turbo держит стык кадров так же, как std, — это выбор по
-      # умолчанию для сериалов. Проверять живьём, тогда же и раскомментировать.
-      # turbo_std: { id: "kwaivgi/kling-v3-turbo-std/image-to-video", usd_per_sec: 0.0224 }
-      # turbo_pro: { id: "kwaivgi/kling-v3-turbo-pro/image-to-video", usd_per_sec: 0.028 }
+      pro: { id: "kwaivgi/kling-v3.0-pro/image-to-video", usd_per_sec: 0.112 }  # ОТКРЫТ 2026-09-12 решением человека по каталогу: base_price $0.56 за 5 с (прежние 0.168/с были догадкой «ровно 2x от std» и врали в полтора раза). Живой генерацией НЕ проверен — первая обязана сверить списанием
+      # turbo-ветка живёт отдельной карточкой `kling3_turbo`: у неё НЕТ end_image,
+      # а поддержка стыка объявляется на провайдера, а не на тир.
     default_tier: std
   # ⚠️ Блоки openrouter и runware ОТКЛЮЧЕНЫ (закомментированы) 2026-08-02, как и
   # тир pro выше. Причина та же, что у seedance_2_0: гейт трат КАРТОЧНОГО уровня —

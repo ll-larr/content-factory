@@ -3,15 +3,16 @@ id: infinitetalk_fast_v2v
 type: audio
 audio_kind: lipsync
 family: infinitetalk
-status: skeleton          # цена из каталога WaveSpeed ($0.075), живой генерацией НЕ подтверждена; пригодность для ПЛОСКОГО МУЛЬТФИЛЬМА не проверена
+status: catalog           # путь, поля и цена сверены по каталогу WaveSpeed 2026-09-12; ЖИВОЙ ГЕНЕРАЦИИ НЕ БЫЛО — решение тратить принято человеком 2026-09-12
 output_format: mp4
 cost_tier: medium
 providers:
-  # ⚠️ Закомментировано до живой генерации — см. mirelo_sfx_16. Отдельный риск:
-  # модели липсинка учены на человеческих лицах, а у нас плоская рисовка и
-  # жестяная птица с неподвижным клювом. Первая проба должна быть на реплике,
-  # где лицо человека видно крупно.
-  # wavespeed: { id: "wavespeed-ai/infinitetalk-fast/video-to-video", usd_per_image: 0.075, fields: { video: video, audio: audio, prompt: prompt } }
+  # Риск, который открытие карточки НЕ снимает: модели липсинка учены на
+  # человеческих лицах, а у нас плоская рисовка и жестяная птица с неподвижным
+  # клювом. Первая проба должна быть на реплике, где лицо человека видно крупно,
+  # и она же обязана сверить цену дельтой баланса.
+  # Цена — за ГЕНЕРАЦИЮ: поля duration в схеме нет вовсе (каталог 2026-09-12).
+  wavespeed: { id: "wavespeed-ai/infinitetalk-fast/video-to-video", usd_per_image: 0.075, fields: { video: video, audio: audio, prompt: prompt } }
 ---
 
 # InfiniteTalk Fast (video-to-video) — липсинк по готовому отрезку

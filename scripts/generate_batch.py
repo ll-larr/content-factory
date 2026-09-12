@@ -416,9 +416,15 @@ def main(argv=None) -> int:
 
     if args.stage == "segments":
         provider_name = project.video_provider
-        # Спека §6: валидация модели ПОД ВЫБРАННОГО провайдера ДО трат
+        # Спека §6: валидация модели ПОД ВЫБРАННОГО провайдера ДО трат.
+        # Поддержка end-кадра спрашивается у ПЛАНА: `end_frame` необязателен
+        # (решение 2026-09-03), и модель без стыка кадров годится для плана,
+        # где стыков нет. План здесь уже прочитан, поэтому вопрос задаётся
+        # ровно там, где на него есть ответ.
         card = find_card(KNOWLEDGE_DIR, project.video_model)
-        problems = validate_video_model(card, project.segment_seconds, provider_name)
+        needs_end = any("end_frame" in s for s in shots["segments"])
+        problems = validate_video_model(card, project.segment_seconds,
+                                        provider_name, needs_end_frame=needs_end)
         if problems:
             return _validation_gate(problems)
 
@@ -486,7 +492,13 @@ def main(argv=None) -> int:
         # Гейт трат раскадровки (симметрично video): валидация image-модели под
         # выбранного провайдера ДО сметы — skeleton/не-тот-провайдер → код 2.
         card = find_card(KNOWLEDGE_DIR, project.image_model)
-        problems = validate_image_model(card, provider_name)
+        # Референсы спрашиваются у ПЛАНА по той же причине, что и стык кадров у
+        # видео: модель без входных картинок годится для кадра без канона и не
+        # годится для лица сериала — решает не модель, а то, что в плане.
+        needs_refs = args.stage == "storyboard" and any(
+            f.get("refs") for f in shots["frames"])
+        problems = validate_image_model(card, provider_name,
+                                        needs_refs=needs_refs)
         if problems:
             return _validation_gate(problems)
 

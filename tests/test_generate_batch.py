@@ -266,6 +266,65 @@ def test_segments_pass_with_accepted_with_notes(proj, monkeypatch):
     assert len(fp2.submitted) == 2
 
 
+def test_model_without_end_frame_is_blocked_only_by_a_plan_with_joins(
+        proj, monkeypatch, capsys):
+    """Стык кадров спрашивается у ПЛАНА, а не у модели (решение 2026-09-03).
+
+    План со стыками на модели без end-кадра — отказ ДО трат. Тот же план без
+    стыков снимается: отрезок живёт внутри одного плана, стык делает монтаж, и
+    требовать поддержку всегда значило бы запрещать работу, которую конвейер
+    модели и даёт.
+    """
+    card = Path("knowledge/video/seedance_2_0.md")
+    card.write_text(card.read_text(encoding="utf-8")
+                    .replace("supports_start_end: true",
+                             "supports_start_end: false"),
+                    encoding="utf-8")
+
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "segments") == 2          # в плане стыки есть
+    assert fp.estimates == []                  # остановлено ДО сметы
+    assert "end frame" in capsys.readouterr().out
+
+    shots_path = proj / "episodes" / "ep01" / "shots.json"
+    shots = json.loads(shots_path.read_text(encoding="utf-8"))
+    for seg in shots["segments"]:
+        seg.pop("end_frame", None)
+    shots_path.write_text(json.dumps(shots, ensure_ascii=False), encoding="utf-8")
+
+    fake_provider(monkeypatch)
+    run(proj, "storyboard")
+    accept_frames(proj)
+    fp2 = fake_provider(monkeypatch)
+    assert run(proj, "segments") == 0
+    assert len(fp2.submitted) == 2
+
+
+def test_image_model_without_refs_is_blocked_only_by_frames_with_refs(
+        proj, monkeypatch, capsys):
+    """То же про референсы: решает план, а не карточка сама по себе."""
+    card = Path("knowledge/images/z_image.md")
+    card.write_text(card.read_text(encoding="utf-8")
+                    .replace("status: verified",
+                             "status: verified" + chr(10) + "supports_refs: false"),
+                    encoding="utf-8")
+
+    fp = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 0        # кадров с refs в плане нет
+    assert len(fp.submitted) == 3
+
+    write_character(proj, "мурзик")
+    shots_path = proj / "episodes" / "ep01" / "shots.json"
+    shots = json.loads(shots_path.read_text(encoding="utf-8"))
+    shots["frames"][0]["refs"] = ["bible/characters/мурзик.md"]
+    shots_path.write_text(json.dumps(shots, ensure_ascii=False), encoding="utf-8")
+
+    fp2 = fake_provider(monkeypatch)
+    assert run(proj, "storyboard") == 2
+    assert fp2.estimates == []
+    assert "референс" in capsys.readouterr().out
+
+
 def test_skeleton_card_blocks_segments(proj, monkeypatch):
     fake_provider(monkeypatch)
     card = Path("knowledge/video/seedance_2_0.md")
