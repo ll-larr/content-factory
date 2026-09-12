@@ -5,11 +5,16 @@
 ошибка здесь стоит денег человека.
 
 Из четырёхсот с лишним моделей показываются семь семейств, названных человеком:
-выбор из всего каталога — это не выбор.
+выбор из всего каталога — это не выбор. Внутри семейства остаются только
+АКТУАЛЬНЫЕ модели: каталог держит всю историю линейки (у DeepSeek — от
+`deepseek-chat` до `v4.1-flash`, у Gemini — от 2.5 до 3.8), и восемь десятков
+строк в одном выпадающем списке — это тот же «выбор из всего каталога», только
+на восьмую его часть. Правила отбора — в `_latest`.
 """
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -51,6 +56,96 @@ def _family(model_id: str) -> tuple[str, str] | None:
     return None
 
 
+# Чем модель НЕ годится для текстовой стадии. Проверяется по словам
+# идентификатора: каталог не объявляет назначение отдельным полем.
+#
+# image/vision/audio — другая модальность: стадия пишет текст, и платить за
+# картиночную голову незачем. codex — модель под код, а у нас сценарий.
+# preview/exp/customtools/multi-agent — вариации того же выпуска, которые
+# отличаются доступом, а не качеством письма; `preview` пропускается только
+# тогда, когда у выпуска есть обычный близнец (см. `_latest`).
+_SKIP_WORDS = {"image", "vision", "audio", "tts", "embed", "embedding",
+               "search", "online", "codex", "distill", "customtools"}
+_SKIP_PHRASES = ("multi-agent",)
+# Датированный снимок (`-0324`, `-05-06`) — это тот же выпуск, прибитый к дате.
+_DATED = re.compile(r"-(\d{4}|\d{2}-\d{2})$")
+_VERSION = re.compile(r"^v?(\d+(?:\.\d+)*)$")
+# Сколько строк одного семейства показывать. Шесть — чтобы линейка, вышедшая
+# сразу тремя именами с pro-вариантами (gpt-5.6 luna/sol/terra), поместилась
+# целиком, а предыдущая уже нет.
+_PER_FAMILY = 6
+
+
+def _version(slug: str) -> float:
+    """Версия из имени: `gpt-5.6-luna` → 5.6, `grok-4.20` → 4.2.
+
+    Читается как ДЕСЯТИЧНОЕ число, а не как кортеж semver: в именах моделей
+    `4.20` означает «четыре-двадцать», то есть выпуск между 4.1 и 4.3, — а
+    покомпонентное сравнение поставило бы её выше 4.6. Третий компонент (редкий
+    `2.5.1`) отбрасывается: он ничего не решает в этом списке.
+    """
+    for token in slug.split("-"):
+        m = _VERSION.match(token)
+        if m:
+            parts = m.group(1).split(".")
+            return float(".".join(parts[:2]))
+    return 0.0
+
+
+def _line(slug: str) -> tuple[str, ...]:
+    """Линия модели: имя без версии и без пометки `preview`.
+
+    `gpt-5.4-mini` и `gpt-5-mini` — одна линия (mini), `gpt-5.6-luna-pro` —
+    своя. Так «последняя версия» считается по СВОЕЙ линии: иначе новый flash
+    похоронил бы pro, который просто вышел раньше.
+    """
+    return tuple(t for t in slug.split("-")
+                 if not _VERSION.match(t) and t != "preview")
+
+
+def _latest(models: list[dict]) -> list[dict]:
+    """Оставить по семейству только актуальное.
+
+    Три правила, по нарастанию грубости:
+    1. в каждой линии — максимальная версия (и не `preview`, если у той же
+       версии есть близнец без пометки);
+    2. линии старее ТЕКУЩЕГО МАЖОРА семейства выбрасываются целиком: пока
+       DeepSeek на v4, строки v3.x — история, а не выбор;
+    3. на семейство не больше `_PER_FAMILY` строк, сначала свежие.
+
+    Мажор, а не полная версия: у Gemini pro последний — 3.1, а flash уже 3.8, и
+    «оставить только самую свежую версию семейства» выкинуло бы pro совсем.
+    """
+    best: dict[tuple, dict] = {}
+    for m in models:
+        slug = m["id"].split("/")[-1]
+        key = (m["family"], _line(slug))
+        version = _version(slug)
+        current = best.get(key)
+        if current is None or version > current["_v"]:
+            best[key] = {**m, "_v": version}
+        elif (version == current["_v"]
+              and "preview" in current["id"] and "preview" not in m["id"]):
+            best[key] = {**m, "_v": version}
+
+    top_major: dict[str, int] = {}
+    for m in best.values():
+        top_major[m["family"]] = max(top_major.get(m["family"], 0),
+                                     int(m["_v"]))
+
+    by_family: dict[str, list[dict]] = {}
+    for m in sorted(best.values(), key=lambda m: (-m["_v"], m["id"])):
+        if int(m["_v"]) < top_major[m["family"]]:
+            continue
+        rows = by_family.setdefault(m["family"], [])
+        if len(rows) < _PER_FAMILY:
+            rows.append(m)
+
+    return sorted(({k: v for k, v in m.items() if k != "_v"}
+                   for rows in by_family.values() for m in rows),
+                  key=lambda m: m["id"])
+
+
 def _per_million(pricing: dict, key: str) -> float | None:
     """Цена за миллион токенов. Каталог отдаёт цену за токен строкой."""
     raw = pricing.get(key)
@@ -70,6 +165,11 @@ def _shape(raw: dict) -> list[dict]:
         # не годится: панель обещает конкретную модель по конкретной цене.
         if not model_id or model_id.endswith(":batch") or model_id.startswith("~"):
             continue
+        slug = model_id.split("/")[-1]
+        if (_DATED.search(slug)
+                or set(slug.split("-")) & _SKIP_WORDS
+                or any(ph in slug for ph in _SKIP_PHRASES)):
+            continue
         family = _family(model_id)
         if family is None:
             continue
@@ -82,7 +182,7 @@ def _shape(raw: dict) -> list[dict]:
             "input_per_million": _per_million(pricing, "prompt"),
             "output_per_million": _per_million(pricing, "completion"),
         })
-    return sorted(models, key=lambda m: m["id"])
+    return _latest(models)
 
 
 def text_models(cache_dir: Path | str = Path(".")) -> list[dict]:
